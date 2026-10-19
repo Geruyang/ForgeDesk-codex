@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { lstat } from 'node:fs/promises';
 import ts from 'typescript';
+import type { Page } from 'playwright';
 import type { AppSnapshot, Approval, Session } from '../../packages/shared/contracts';
 import { ROOT, SHA, closed, readStable, sha, type Pin } from './release-1-files';
 import { inside, samePath } from './embedded-installed';
@@ -14,14 +15,15 @@ export const CONTROLS_ENTRIES = ['tests/release-1-controls-smoke.ts', 'tests/hel
 export const CONTROL_PHASES = ['launch', 'ready', 'stop', 'mcp-request', 'reload', 'refuse', 'diagnostics', 'close-a', 'restart', 'restart-verify', 'close-b', 'missing-launch', 'missing-tools', 'missing-close'] as const;
 const FAILURE_CHECKPOINTS = ['none', 'snapshot-contract', 'host-snapshot-contract', 'no-work', 'history-primary-identity', 'history-primary-immutable', 'history-primary-owner', 'history-primary-release', 'history-extra-inspect', 'history-hardware', 'gate-arm', 'phase-verify', 'launch-persisted-quiet', 'launch-lifecycle-prepare', 'launch-lifecycle-before', 'launch-playwright-import', 'launch-application', 'launch-native-attach', 'launch-first-window', 'launch-header', 'launch-viewport', 'launch-boundary-install', 'launch-child-path', 'launch-host-observation', 'mode-leave-preflight', 'mode-leave-ipc', 'mode-leave-receipt', 'mode-leave-postflight'] as const;
 const FAILURE_CAUSES = ['CONTROLS_ELECTRON_MISMATCH', 'CONTROLS_BOUNDARY_UNAVAILABLE', 'CONTROLS_BOUNDARY_NOT_QUIET', 'CONTROLS_BOUNDARY_BAD_ARM', 'CONTROLS_BOUNDARY_CHANGED', 'CONTROLS_IPC_NOT_ARMED', 'CONTROLS_PROJECT_ROOT_MISMATCH', 'CONTROLS_HELD_NO_NEXT_ACTION', 'CONTROLS_PHASE_HELD'] as const;
-export type ControlsCheckpoint = typeof FAILURE_CHECKPOINTS[number];
+const SESSION_CHECKPOINTS = ['session-project-binding', 'session-project-select', 'session-create', 'session-binding', 'session-select'] as const;
+export type ControlsCheckpoint = typeof FAILURE_CHECKPOINTS[number] | typeof SESSION_CHECKPOINTS[number];
 export function sanitizeControlsFailure(error: unknown, checkpoint: unknown) {
   let reason: 'ASSERTION' | 'TIMEOUT' | 'OTHER' = 'OTHER';
   let cause: typeof FAILURE_CAUSES[number] | 'none' = 'none';
   try { if (error instanceof Error) { if ((error as NodeJS.ErrnoException).code === 'ERR_ASSERTION') reason = 'ASSERTION'; else if (error.name === 'TimeoutError') reason = 'TIMEOUT';
     const message = error.message; for (const known of FAILURE_CAUSES) if (message === known || message.endsWith('Error: ' + known) || message.includes('Error: ' + known + '\n')) { cause = known; break; }
   } } catch { reason = 'OTHER'; cause = 'none'; }
-  return { reason, checkpoint: FAILURE_CHECKPOINTS.includes(checkpoint as ControlsCheckpoint) ? checkpoint as ControlsCheckpoint : 'none', cause };
+  return { reason, checkpoint: [...FAILURE_CHECKPOINTS, ...SESSION_CHECKPOINTS].includes(checkpoint as ControlsCheckpoint) ? checkpoint as ControlsCheckpoint : 'none', cause };
 }
 export type ControlPhase = typeof CONTROL_PHASES[number] | 'connect' | 'leave-mode' | 'restart-leave' | 'missing-leave';
 export interface ControlsHarness {
@@ -157,6 +159,28 @@ export function assertRestartSessions(state: AppSnapshot, expected: Session[]) {
     assert.equal(current.taskId, old.taskId); assert.equal(current.threadId, old.threadId); assert.equal(current.status, old.status); assert.ok(!current.turnId);
     assert.deepEqual(current.messages, old.messages); assert.equal(state.tasks.find(t => t.id === old.taskId)!.operations.length, 0);
   }
+}
+export function assertControlsSessionBinding(state: AppSnapshot, projectId: string, root: string, session?: Session) {
+  const projects = state.projects.filter(project => project.id === projectId);
+  assert.equal(projects.length, 1); assert.ok(samePath(projects[0].root, root));
+  assert.equal(state.projects.filter(project => samePath(project.root, root)).length, 1);
+  if (session) {
+    assert.equal(session.projectId, projectId);
+    const matches = state.sessions.filter(current => current.id === session.id);
+    assert.equal(matches.length, 1); assert.equal(matches[0].projectId, projectId); assert.equal(matches[0].title, session.title);
+    assert.equal(state.sessions.filter(current => current.projectId === projectId && current.title === session.title).length, 1);
+  }
+}
+export async function selectControlsProject(page: Page, root: string) {
+  const project = page.locator('.project-list').getByTitle(root, { exact: true });
+  await project.waitFor({ state: 'visible' }); assert.equal(await project.count(), 1);
+  await project.click(); await project.and(page.locator('.selected')).waitFor({ state: 'visible' });
+}
+export async function selectControlsSession(page: Page, title: string) {
+  const session = page.locator('.session-list').getByRole('button').filter({ has: page.getByText(title, { exact: true }) });
+  await session.waitFor({ state: 'visible' }); assert.equal(await session.count(), 1);
+  await session.click(); await session.and(page.locator('.selected')).waitFor({ state: 'visible' });
+  await page.locator('.conversation').getByRole('heading', { name: title, exact: true }).waitFor({ state: 'visible' });
 }
 export function assertControlsHostSnapshot(state: AppSnapshot, dataDir: string, installed: string) {
   assert.equal(state.version, '1.0.0'); assert.ok(samePath(state.dataDir, dataDir)); assert.equal(state.hardware.enabled, false); assert.equal(typeof state.hardware.modeActive, 'boolean');

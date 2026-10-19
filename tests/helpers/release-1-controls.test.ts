@@ -8,13 +8,34 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import type { AppSnapshot, Approval, Session } from '../../packages/shared/contracts';
 import { CONTROL_PHASES, CONTROLS_ENTRIES, ControlsGate, assertControlsHarness, assertFreshRefusal, assertOwnedWaitProcess,
-  assertRefusalComplete, assertReleaseDiagnostics, assertRestartSessions, controlsClosure, type WaitProcess } from './release-1-controls';
+  assertRefusalComplete, assertReleaseDiagnostics, assertRestartSessions, assertControlsSessionBinding, selectControlsProject, selectControlsSession, sanitizeControlsFailure, controlsClosure, type WaitProcess } from './release-1-controls';
 import { assertStopObservationTiming, assertWaitCommand } from './second-user-controls';
 import { assertControlsStopReceipt } from './controls-stop-observer';
 import { assertAcceptanceUnchanged, assertMissingGitResult, assertMissingNodeResult, missingToolsAppEnvironment } from './second-user-missing-tools';
 import { armControlsBoundary, installControlsBoundary, readControlsBoundary } from './release-1-controls-observer';
 
 const pin = 'a'.repeat(64), nextPin = 'b'.repeat(64), requestKey = 'qa-request';
+test('QA session selection requires the unique fixed project and exact persisted session binding', () => {
+  const session = { id: 'qa-session', projectId: 'qa-project', title: 'QA [exact]+(title)' } as Session;
+  const state = { projects: [{ id: 'old-project', root: 'E:/old' }, { id: 'qa-project', root: 'E:/qa' }], sessions: [session] } as AppSnapshot;
+  assert.doesNotThrow(() => assertControlsSessionBinding(state, 'qa-project', 'E:/qa', session));
+  for (const changed of [{ ...state, projects: [state.projects[0]] }, { ...state, projects: [...state.projects, state.projects[1]] }, { ...state, sessions: [{ ...session, projectId: 'old-project' }] }, { ...state, sessions: [...state.sessions, { ...session, id: 'duplicate-title' }] }]) {
+    assert.throws(() => assertControlsSessionBinding(changed, 'qa-project', 'E:/qa', session));
+  }
+  assert.throws(() => assertControlsSessionBinding(state, 'qa-project', 'E:/other', session));
+});
+test('project and session selectors are scoped exact DOM actions with closed failure checkpoints', async () => {
+  const calls: unknown[] = [];
+  const locator: any = new Proxy({}, { get(_target, method) { return (...args: unknown[]) => { calls.push([method, ...args]); return method === 'count' ? Promise.resolve(1) : ['click', 'waitFor'].includes(String(method)) ? Promise.resolve() : locator; }; } });
+  const page: any = { locator: (...args: unknown[]) => { calls.push(['locator', ...args]); return locator; }, getByText: (...args: unknown[]) => { calls.push(['text', ...args]); return locator; } };
+  await selectControlsProject(page, 'E:/qa'); await selectControlsSession(page, 'QA [exact]+(title)');
+  assert.ok(calls.some((call: any) => call[0] === 'locator' && call[1] === '.project-list'));
+  assert.ok(calls.some((call: any) => call[0] === 'locator' && call[1] === '.session-list'));
+  assert.ok(calls.some((call: any) => call[0] === 'getByTitle' && call[1] === 'E:/qa' && call[2].exact === true));
+  assert.ok(calls.some((call: any) => call[0] === 'text' && call[1] === 'QA [exact]+(title)' && call[2].exact === true));
+  assert.equal(calls.filter((call: any) => call[0] === 'click').length, 2);
+  for (const checkpoint of ['session-project-binding', 'session-project-select', 'session-create', 'session-binding', 'session-select']) assert.equal(sanitizeControlsFailure(Error('PRIVATE'), checkpoint).checkpoint, checkpoint);
+});
 test('controls failure output never serializes raw errors and uses only closed history checkpoints', async () => {
   const source = await readFile(path.resolve('tests/release-1-controls-smoke.ts'), 'utf8');
   assert.doesNotMatch(source, /error\.stack|safeError\(|redact\(e\.message\)/);

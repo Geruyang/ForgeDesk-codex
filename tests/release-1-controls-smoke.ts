@@ -19,7 +19,7 @@ import { assertAcceptanceUnchanged, assertMissingGitResult, assertMissingNodeRes
 import { assertControlsStopReceipt, installControlsStopObserver, readControlsStopObserver, restoreControlsStopObserver } from './helpers/controls-stop-observer';
 import { armControlsBoundary, installControlsBoundary, readControlsBoundary } from './helpers/release-1-controls-observer';
 import { CONTROLS_OUTPUT, ControlsGate, assertControlsSnapshot, assertFreshRefusal, assertOwnedWaitProcess, assertRefusalComplete,
-  assertReleaseDiagnostics, assertRestartSessions, controlsClosure, controlsRuntimeClosure, verifyControlsHarness, sanitizeControlsFailure, assertControlsHostSnapshot, observeControlsModeLeave, type ControlsCheckpoint, type WaitProcess, type ControlPhase } from './helpers/release-1-controls';
+  assertReleaseDiagnostics, assertRestartSessions, assertControlsSessionBinding, selectControlsProject, selectControlsSession, controlsClosure, controlsRuntimeClosure, verifyControlsHarness, sanitizeControlsFailure, assertControlsHostSnapshot, observeControlsModeLeave, type ControlsCheckpoint, type WaitProcess, type ControlPhase } from './helpers/release-1-controls';
 
 const installed = path.join(ROOT, 'install/ForgeDesk.exe'), dataDir = path.join(ROOT, '.runtime/app');
 const execute = promisify(execFile), ps = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
@@ -130,8 +130,12 @@ async function run(args: string[]) {
     return { ...launch, controlledModeActive: controlled, coverage: 'Boundary installed only after verified native attach, real first window and visible app-header; no pre-hook IPC absence claim.' };
   }
   async function newSession(title: string) {
-    assert.ok(page && projectId); const value = await invoke<Session>('createSession', [projectId, title]);
-    owned.push(value.id); await effect(() => page!.getByRole('button', { name: new RegExp(title) }).click()); return value;
+    assert.ok(page && projectId); const before = await snapshot();
+    checkpoint = 'session-project-binding'; assertControlsSessionBinding(before, projectId, workspace);
+    checkpoint = 'session-project-select'; await effect(() => selectControlsProject(page!, workspace));
+    checkpoint = 'session-create'; const value = await invoke<Session>('createSession', [projectId, title]); owned.push(value.id);
+    const after = await snapshot(); checkpoint = 'session-binding'; assertControlsSessionBinding(after, projectId, workspace, value);
+    checkpoint = 'session-select'; await effect(() => selectControlsSession(page!, title)); return value;
   }
   async function close() { assert.ok(lifecycle && app); await boundary(); const result = await effect(() => lifecycle!.closeNormally()); app = undefined; page = undefined; return result; }
   async function phaseAction(phase: ControlPhase): Promise<any> {

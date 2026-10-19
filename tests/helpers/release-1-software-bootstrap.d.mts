@@ -1,0 +1,20 @@
+import type { Pin } from './release-1-files';
+import type { Stats } from 'node:fs';
+export interface RuntimeInventory { runtimePackages: string[]; runtimePins: Pin[] }
+export const PROJECT: string;
+export const OUTPUT: string;
+export const BOOTSTRAP: string;
+export const NODE: string;
+export const GIT: string;
+export const RUNTIME_SEEDS: readonly string[];
+export const SOURCE_FILES: readonly string[];
+export function digest(raw: Buffer | string): string;
+export function stable(file: string, limit?: number, expectedStat?: Stats): Promise<Buffer>;
+export function runtimeClosure(root: string): Promise<RuntimeInventory>;
+export function verifyRuntime(root: string, value: RuntimeInventory): Promise<void>;
+export function assertRuntimeShape(value: unknown): void;
+export function sourceClosure(root: string): Promise<Pin[]>;
+export function resolutionMetadata(root: string, read?: (file: string, limit: number) => Promise<Buffer>): Promise<void>;
+export function assertLoaderEnvironment(env: NodeJS.ProcessEnv): void;
+export function verifyBeforeImport(root: string, request: {mode: 'prepare' | 'observe'; path: string; sha256: string}, selfSha256: string, expectedNodeSha256: string, io?: unknown): Promise<{harness: unknown; plan: unknown}>;
+export function bootstrap(root: string, mode: string, args: string[], selfSha256: string, expectedNodeSha256: string): Promise<void>;
