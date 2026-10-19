@@ -89,12 +89,13 @@ let mainSource: Promise<string> | undefined;
 function bundleMain() {
   return mainSource ??= build({ entryPoints: [path.join(root, 'apps/desktop/main/index.ts')], bundle: true,
     platform: 'node', format: 'cjs', write: false, plugins: [{ name: 'qa-boundaries', setup(builder) {
-      builder.onResolve({ filter: /^(electron|\.\/hardware-runtime|\.\/host-finalization-store|\.\.\/\.\.\/\.\.\/packages\/(engine-adapter(?:\/snapshot-isolation|\/restricted-hardware|\/restricted-fz3b)?|engineering-runner(?:\/embedded|\/device\/real-stm32|\/fz3b\/(?:backend|worker|credentials))?|engineering-mcp))$/ },
+      builder.onResolve({ filter: /^(electron|\.\/hardware-runtime|\.\/host-finalization-store|\.\/release-recovery-history-launch|\.\.\/\.\.\/\.\.\/packages\/(engine-adapter(?:\/snapshot-isolation|\/restricted-hardware|\/restricted-fz3b)?|engineering-runner(?:\/embedded|\/device\/real-stm32|\/fz3b\/(?:backend|worker|credentials))?|engineering-mcp))$/ },
         args => ({ path: args.path, namespace: 'qa-boundary' }));
       builder.onLoad({ filter: /.*/, namespace: 'qa-boundary' }, args => {
         const exports = args.path === 'electron'
           ? ['app', 'BrowserWindow', 'dialog', 'ipcMain', 'shell', 'session']
           : args.path.endsWith('hardware-runtime') ? ['verifyHardwareRuntime']
+          : args.path.endsWith('release-recovery-history-launch') ? ['createNativeStartupHistoryOwner']
           : args.path.endsWith('host-finalization-store') ? ['createFz3bHostFinalizationStore', 'hasFz3bHostFinalization', 'finishFz3bHostFinalization', 'readFz3bHostLocalProof', 'assertFz3bHostLocalProof', 'canQuarantineFz3bEmptyHome', 'prepareFz3bEmptyHome', 'quarantineFz3bEmptyHome']
           : args.path.endsWith('fz3b/credentials') ? ['currentSid', 'fz3bPrivateAclBatchSync', 'fz3bPrivateAclSync']
           : args.path.endsWith('real-stm32') ? ['FixedStm32HardwareService']
@@ -157,6 +158,14 @@ export async function desktopHarness(input: boolean | DesktopHarnessOptions = fa
   const failures: string[] = [];
   const externalURLs: string[] = [];
   const timers = new Set<ReturnType<typeof setTimeout>>();
+  const immediates = new Set<ReturnType<typeof setImmediate>>();
+  let startupHistoryFactoryCalls = 0, startupHistoryReadCalls = 0;
+  const startupHistoryResult = Object.freeze({ status: 'held', closeConfirmed: true,
+    reason: 'Native startup history is disabled in desktop VM fixture', projection: Object.freeze({
+      schemaVersion: 1, status: 'history-read-held', observationPhase: 'post-startup-reconciliation',
+      observation: 'unavailable', failure: 'history-read-or-validation-refused', suppliedEntriesSha256: null, rows: Object.freeze([]),
+      admissionAuthorized: false, releaseAuthorized: false, newRunAuthorized: false, activeEpochAdopted: false,
+      currentBootEstablished: false, automaticReplay: false, strictFinalizationVerified: false, operationalQuarantineVerified: false }) });
   const events: Array<{ generation: number; sequence: number; method: string; params: unknown }> = [];
   const tasks: Array<any> = [];
   const probeCalls: Array<Record<string, any>> = [];
@@ -256,14 +265,19 @@ export async function desktopHarness(input: boolean | DesktopHarnessOptions = fa
     contentsCallbacks = new Map<string, (...args: any[]) => void>();
     openHandler?: () => unknown;
     destroyed = false;
+    visible = true;
     webContents = { mainFrame: {}, send: () => {}, setWindowOpenHandler: (callback: () => unknown) => { this.openHandler = callback; },
       on: (name: string, callback: (...args: any[]) => void) => { this.contentsCallbacks.set(name, callback); } };
     constructor(options: any) { this.options = options; win = this; }
     async loadFile() {}
     on(name: string, callback: (...args: any[]) => void) { this.callbacks.set(name, callback); }
-    destroy() { this.destroyed = true; }
+    once(name: string, callback: (...args: any[]) => void) {
+      this.callbacks.set(name, (...args) => { this.callbacks.delete(name); callback(...args); });
+    }
+    destroy() { this.destroyed = true; this.visible = false; }
     isDestroyed() { return this.destroyed; }
-    show() {}
+    isVisible() { return this.visible && !this.destroyed; }
+    show() { this.visible = true; this.callbacks.get('show')?.(); }
     focus() {}
   }
   class MockRunner {
@@ -322,6 +336,13 @@ export async function desktopHarness(input: boolean | DesktopHarnessOptions = fa
     async readPublicEvidence(): Promise<never> { throw new Error('Native FZ3B worker is disabled in desktop VM fixture'); }
   }
   const qa = {
+    // Explicit test boundary: no child, pin read, native SID/ACL or real history exists here.
+    createNativeStartupHistoryOwner: (input: { dataDir: string }) => {
+      if (input.dataDir !== dataDir) throw new Error('Startup history fixture root mismatch');
+      startupHistoryFactoryCalls++;
+      const pending = Promise.resolve(startupHistoryResult);
+      return Object.freeze({ read: () => { startupHistoryReadCalls++; return pending; } });
+    },
     // These older IPC fixtures do not attest host certificates or query a real Windows token.
     createFz3bHostFinalizationStore: () => undefined,
     hasFz3bHostFinalization: async () => { throw new Error('Host finalization is disabled in the legacy desktop IPC fixture'); },
@@ -382,12 +403,16 @@ export async function desktopHarness(input: boolean | DesktopHarnessOptions = fa
     process: { ...process, env: { ...process.env, FORGEDESK_DATA_DIR: dataDir }, execPath: process.execPath, stdout: vmStdout, stderr: vmStderr },
     console: vmConsole, URL, Buffer, AbortController, AbortSignal, setTimeout: (callback: () => void, ms: number) => {
       const timer = setTimeout(() => { timers.delete(timer); callback(); }, ms); timers.add(timer); return timer;
-    }, clearTimeout, structuredClone });
+    }, clearTimeout, setImmediate: (callback: () => void) => {
+      const immediate = setImmediate(() => { immediates.delete(immediate); callback(); });
+      immediates.add(immediate); return immediate;
+    }, structuredClone });
   await until(() => !!invokeHandler && !!win && !!engine && (options.initialHardwareMode !== undefined ? engine.state === 'stopped' : engine.state === 'ready'));
   await delay();
   const trustedEvent = { sender: win!.webContents, senderFrame: win!.webContents.mainFrame };
   const invoke = (method: string, ...args: unknown[]) => invokeHandler!(trustedEvent, method, args);
   return { directory, dataDir, projectRoot, engine: engine!, window: win!, failures, externalURLs,
+    startupHistory: { get factoryCalls() { return startupHistoryFactoryCalls; }, get readCalls() { return startupHistoryReadCalls; }, result: startupHistoryResult },
     get restrictedEngine() { return restrictedEngine; },
     get fz3bEngine() { return fz3bEngine; }, get fz3bBackend() { return fz3bBackend; }, get fz3bImportCalls() { return fz3bImportCalls; },
     invoke, rawInvoke: invokeHandler!, trustedEvent, tasks, probeCalls, dialog: qa.dialog, standardStreams: { stdout: vmStdout, stderr: vmStderr },
@@ -396,7 +421,7 @@ export async function desktopHarness(input: boolean | DesktopHarnessOptions = fa
     snapshot: () => invoke('snapshot') as Promise<AppSnapshot>,
     permission: (callback: (allowed: boolean) => void) => permission!({}, 'clipboard-read', callback),
     closed: () => ({ quit, runnerClosed, bridgeClosed }),
-    cleanup: async () => { for (const timer of timers) clearTimeout(timer); await embedded?.close(); await productionRunner?.close(); await rm(directory, { recursive: true, force: true }); }
+    cleanup: async () => { for (const immediate of immediates) clearImmediate(immediate); for (const timer of timers) clearTimeout(timer); await embedded?.close(); await productionRunner?.close(); await rm(directory, { recursive: true, force: true }); }
   };
 }
 

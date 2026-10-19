@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const TEST_ROOTS = Object.freeze(['apps/desktop/renderer', 'packages', 'tests']);
+export const TEST_ROOTS = Object.freeze(['apps', 'packages', 'tests']);
 export const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const excluded = new Set(['output', 'vendor', '.runtime', '.test-output', 'node_modules', '.git']);
 const testName = /\.test\.(?:ts|tsx|mjs)$/;

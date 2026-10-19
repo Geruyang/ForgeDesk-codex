@@ -34,6 +34,7 @@ import { DesktopStore } from './store';
 import { EmbeddedService } from '../../../packages/engineering-runner/embedded';
 import { FixedStm32HardwareService } from '../../../packages/engineering-runner/device/real-stm32';
 import { verifyHardwareRuntime } from './hardware-runtime';
+import { createNativeStartupHistoryOwner } from './release-recovery-history-launch';
 import type { AppSnapshot, Session, TaskView } from '../../../packages/shared/contracts';
 
 const exec = promisify(execFile);
@@ -45,6 +46,7 @@ let engineError: string | undefined;
 let enginePath = '';
 let processHostPath = '';
 let dataDir = '';
+let startupHistoryOwner: ReturnType<typeof createNativeStartupHistoryOwner> | undefined;
 let embedded: EmbeddedService;
 let hardwareRoot = '';
 let hardwareWorker = '';
@@ -1038,6 +1040,18 @@ else void app.whenReady().then(async () => {
   window.webContents.on('will-navigate', event => event.preventDefault());
   await window.loadFile(path.join(__dirname, '../renderer/index.html'));
   window.on('close', event => { event.preventDefault(); void shutdown(); });
+  const startReadonlyHistoryDiagnostic = () => {
+    if (startupHistoryOwner || closing || shutdownPending || !window?.isVisible()) return;
+    try {
+      startupHistoryOwner = createNativeStartupHistoryOwner({ dataDir, packaged: app.isPackaged, mainDirectory: __dirname,
+        resourcesPath: process.resourcesPath, appPath: app.getAppPath(), executable: process.execPath });
+    } catch { log('Startup history diagnostic configuration refused; no worker was launched.'); return; }
+    void startupHistoryOwner.read().then(result => {
+      log(`Startup history diagnostic: ${result.status}; owned close ${result.closeConfirmed ? 'confirmed' : 'unconfirmed'}; historical rows ${result.projection?.rows.length ?? 'unavailable'}; admission and release not granted.`);
+    });
+  };
+  if (window.isVisible()) setImmediate(startReadonlyHistoryDiagnostic);
+  else window.once('show', startReadonlyHistoryDiagnostic);
   if (!hardwareMode) void connect().catch(() => undefined);
 }).catch(error => { dialog.showErrorBox('ForgeDesk 启动失败', redact(String(error))); app.quit(); });
 let closeWarningOpen = false;
@@ -1060,6 +1074,11 @@ async function shutdown() {
     }
     // Already admitted asynchronous work must settle before any owner is torn down.
     await Promise.allSettled([...pendingMainWork]);
+    if (startupHistoryOwner && !(await startupHistoryOwner.read()).closeConfirmed) {
+      shutdownFailed = true; publish();
+      await showCloseWarning({ type: 'warning', message: '只读历史诊断进程退出未确认，窗口已保留。请先复核状态。' });
+      return;
+    }
     try { await embedded.assertIdle(); await fz3bAgent?.assertIdle(); if (fz3bUnavailableHold) throw new Error('FZ3B_UNKNOWN_STATE_HELD'); }
     catch (error) { shutdownFailed = true; publish(); await showCloseWarning({ type: 'warning', message: '设备进程退出未确认，不能直接退出。请先复核设备操作状态。', detail: String(error) }); return; }
     if (nativeDialogs.busy || fz3bHostActionRunId || protectedTasks.size || fz3bKeyImporting) return;

@@ -1,0 +1,35 @@
+ForgeDesk 1.0 third-party notices and corresponding source arrangement
+
+Codex
+The accompanying Codex-LICENSE.txt and Codex-NOTICE.txt are from the official
+rust-v0.162.0-alpha.17.2 tag:
+https://github.com/openai/codex/tree/rust-v0.162.0-alpha.17.2
+Read and retain those exact license and notice documents. The four bundled
+Windows executables retain their existing signed-container bytes, sizes and
+SHA256 values in codex/manifest.json. Their raw hashes differ from the matching
+official npm archive members. A reviewed PE comparison found program content
+equal after excluding only the PE checksum, Security Directory entry and
+terminal signature table. This is not a claim of raw official-file equality.
+No signature validation is performed by this text or by the inventory audit.
+
+libusb
+libusb-1.0.30-COPYING.txt supplies the upstream LGPL2.1 terms.
+Both source archives are included beside this notice, not merely linked:
+  libusb-1.0.30-source.tar.gz
+  libusb-package-1.0.30.0-source.tar.gz
+The second archive is the pyocd/libusb-package v1.0.30.0 build wrapper and recipe;
+the first supplies libusb v1.0.30 source for its src/libusb submodule. To inspect
+or rebuild independently, extract the wrapper and place the library source at
+its src/libusb layout, retaining the upstream COPYING and notices. Follow the
+wrapper README, setup.py, pyproject.toml and build-wheels workflow rather than
+inventing a binary-equivalence claim. Matching upstream submodule/tag commit:
+87a55632db62c9bdc58cd31d3ccfa673f1bb017f.
+https://github.com/libusb/libusb/tree/v1.0.30
+https://github.com/pyocd/libusb-package/tree/v1.0.30.0
+The original hardware runtime manifest identifies the shipped dependency bytes.
+These source archives were not rebuilt by this release preparation, and no
+reproducible-bit-build or additional license exception is asserted.
+
+These materials are additional to the original runtime license documents;
+they do not relicense ForgeDesk, FZ3B models, embeddings or images. Research
+resource terms and image-use rights remain separate, explicitly scoped gates.

@@ -1,0 +1,121 @@
+name: Pure Software Subset
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  software-subset:
+    name: Windows Typecheck And 63 Pure Cases
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CI: 'true'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/forgedesk-ci-user.npmrc
+      NPM_CONFIG_GLOBALCONFIG: ${{ runner.temp }}/forgedesk-ci-global.npmrc
+    steps:
+      - name: Preserve Reviewed Checkout Bytes
+        run: git config --global core.autocrlf false
+
+      - name: Checkout Reviewed Event Commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: false
+          lfs: false
+
+      - name: Set Up Fixed Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+          architecture: x64
+          check-latest: false
+          package-manager-cache: false
+
+      - name: Check Public Lock Sources Before Installation
+        run: |
+          New-Item -ItemType File -Path $env:NPM_CONFIG_USERCONFIG -Force | Out-Null
+          New-Item -ItemType File -Path $env:NPM_CONFIG_GLOBALCONFIG -Force | Out-Null
+          @'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          assert.equal(lock.lockfileVersion, 3);
+          assert.equal(lock.packages[''].name, pkg.name);
+          assert.equal(lock.packages[''].version, pkg.version);
+          for (const [name, item] of Object.entries(lock.packages)) {
+            if (name === '') continue;
+            assert.equal(item.link, undefined, `Linked dependency: ${name}`);
+            assert.match(item.integrity, /^sha512-[A-Za-z0-9+/]+={0,2}$/);
+            const url = new URL(item.resolved);
+            assert.equal(url.protocol, 'https:');
+            assert.equal(url.hostname, 'registry.npmjs.org');
+            assert.equal(url.username + url.password + url.port + url.search + url.hash, '');
+          }
+          console.log(`Checked ${Object.keys(lock.packages).length - 1} public locked packages`);
+          '@ | node --input-type=module
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install Locked Registry Packages Without Lifecycle Scripts
+        run: npm ci --ignore-scripts --include=dev --include=optional --no-audit --no-fund --registry=https://registry.npmjs.org/
+
+      - name: Verify Optional Esbuild Tool Without Installer Fallback
+        run: |
+          @'
+          import assert from 'node:assert/strict';
+          import { createRequire } from 'node:module';
+          import { execFileSync } from 'node:child_process';
+          import { transformSync, version } from 'esbuild';
+          const require = createRequire(import.meta.url);
+          assert.equal(process.version, 'v24.21.0');
+          assert.equal(process.platform, 'win32');
+          assert.equal(process.arch, 'x64');
+          const binary = require.resolve('@esbuild/win32-x64/esbuild.exe');
+          const actual = execFileSync(binary, ['--version'], {
+            shell: false, windowsHide: true, timeout: 5000, maxBuffer: 1024,
+          }).toString('utf8').trim();
+          assert.equal(actual, version);
+          assert.match(transformSync('const value: number = 1;', { loader: 'ts' }).code, /const value = 1/);
+          console.log(`Node ${process.version}; locked esbuild ${version}; optional executable verified`);
+          '@ | node --input-type=module
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Typecheck Checkout Sources
+        run: npm run typecheck
+
+      - name: Run Only The Explicit Pure Software Subset
+        run: |
+          $files = @(
+            'tests/test-discovery.test.mjs',
+            'packages/engineering-runner/runner-boundaries.test.ts',
+            'packages/engine-adapter/lifecycle-regressions.test.mjs',
+            'packages/engine-adapter/snapshot-boundary-regressions.test.mjs',
+            'tests/main-exit-regressions.test.mjs',
+            'tests/controls-stop-observer.test.ts',
+            'packages/engineering-runner/fz3b/backend-grant-binding.test.ts',
+            'packages/engineering-runner/fz3b/grant-window.test.ts'
+          )
+          $log = Join-Path $env:RUNNER_TEMP 'forgedesk-pure-subset.tap'
+          node --import tsx --test --test-concurrency=1 --test-reporter=tap @files 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+          $text = Get-Content -Raw -LiteralPath $log
+          $expected = @{ tests = 63; pass = 63; fail = 0; cancelled = 0; skipped = 0; todo = 0 }
+          foreach ($key in $expected.Keys) {
+            $matches = [regex]::Matches($text, "(?m)^# $key (\d+)\r?$")
+            if ($matches.Count -ne 1 -or [int]$matches[0].Groups[1].Value -ne $expected[$key]) {
+              throw "Incomplete or changed subset metric: $key"
+            }
+          }

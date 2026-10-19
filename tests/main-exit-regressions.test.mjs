@@ -5,6 +5,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ts = createRequire(root + '/package.json')('typescript');
@@ -35,6 +37,7 @@ function setup(options = {}) {
   const mainFrame = {}, webContents = { mainFrame };
   const globals = {
     closing: false, shutdownPending: false, shutdownFailed: false, closeWarningOpen: false, pendingMainWork: new Set(),
+    startupHistoryOwner: options.startupHistoryOwner ?? undefined,
     fz3bHostActionRunId: undefined, fz3bHostStartupReadOnly: false, fz3bKeyImporting: false,
     hardwareAgentStarting: false, hardwareAgentRunId: undefined, fz3bUnavailableHold: false,
     protectedTasks: new Set(), sendingSessions: new Set(), stoppingSessions: new Set(),
@@ -56,6 +59,53 @@ function setup(options = {}) {
   return { ...context, calls, globals, event: { sender: webContents, senderFrame: mainFrame } };
 }
 const defer = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+
+let historyReaderFactory;
+async function ownedHistoryFixture() {
+  historyReaderFactory ??= (async () => {
+    const { build } = createRequire(root + '/package.json')('esbuild');
+    const result = await build({ entryPoints: [root + '/apps/desktop/main/release-recovery-history-async.ts'],
+      bundle: true, write: false, platform: 'node', format: 'cjs' });
+    const module = { exports: {} };
+    runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require: createRequire(root + '/package.json'),
+      Buffer, process, setTimeout, clearTimeout });
+    return module.exports.createStartupHistoryAsyncReader;
+  })();
+  const create = await historyReaderFactory, events = new EventEmitter(), timers = new Map();
+  let launches = 0, kills = 0;
+  const child = { once: events.once.bind(events), stdout: new PassThrough(), stderr: new PassThrough(),
+    stdin: { on() {}, end() {} }, kill() { kills++; return true; } };
+  const owner = create(root, false, () => { launches++; return child; }, (callback, ms) => {
+    assert(!timers.has(ms)); timers.set(ms, callback); return () => timers.delete(ms);
+  });
+  const pending = owner.read(); events.emit('spawn');
+  return { owner, pending, events, launches: () => launches, kills: () => kills,
+    tick(ms) { const callback = timers.get(ms); assert(callback); timers.delete(ms); callback(); } };
+}
+
+test('an actual diagnostic owner with unconfirmed close retains the window and blocks all teardown', async () => {
+  const history = await ownedHistoryFixture(), f = setup({ startupHistoryOwner: history.owner });
+  const closing = f.shutdown(); await Promise.resolve(); assert.equal(f.calls.stop, 0); assert.equal(f.calls.quit, 0);
+  history.tick(20000); assert.equal(history.kills(), 1); history.tick(5000);
+  const result = await history.pending; assert.equal(result.closeConfirmed, false); assert.equal(result.status, 'unknown');
+  await closing; assert.equal(f.calls.warning, 1);
+  for (const name of ['stop', 'bridge', 'embedded', 'runner', 'save', 'destroy', 'quit']) assert.equal(f.calls[name], 0, name);
+  assert.equal(f.globals.shutdownFailed, true); assert.equal(f.globals.shutdownPending, false);
+  await assert.rejects(f.ipc(f.event, 'connect', []), /SHUTDOWN/);
+  assert.equal(await f.ipc(f.event, 'snapshot', []), 'readonly');
+  history.events.emit('close', 0, null);
+  assert.equal(await history.owner.read(), result); assert.equal(history.launches(), 1); assert.equal(f.calls.quit, 0);
+});
+
+test('an actual diagnostic owner permits existing teardown only after confirmed child close', async () => {
+  const history = await ownedHistoryFixture(), f = setup({ startupHistoryOwner: history.owner });
+  const closing = f.shutdown(); await Promise.resolve(); assert.equal(f.calls.stop, 0); assert.equal(f.calls.quit, 0);
+  history.events.emit('close', 2, null); // Diagnostic read refused, but the actual owned close was observed.
+  const result = await history.pending; assert.equal(result.closeConfirmed, true); assert.equal(result.status, 'held');
+  await closing;
+  for (const name of ['stop', 'bridge', 'embedded', 'runner', 'save', 'destroy', 'quit']) assert.equal(f.calls[name], 1, name);
+  assert.equal(f.calls.warning, 0); assert.equal(history.launches(), 1); assert.equal(history.kills(), 0);
+});
 
 test('a second native close cannot bypass an in-progress shutdown', async () => {
   let prevented = 0, shutdowns = 0;

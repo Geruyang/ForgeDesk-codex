@@ -18,6 +18,9 @@ for (const [name, file] of [
   ['__FORGEDESK_HARDWARE_WORKER_SHA256__', 'engineering/hardware-worker.py'],
   ['__FORGEDESK_FZ3B_RESOURCES_SHA256__', 'engineering/fz3b/product/resources/manifest.json'],
 ]) hardwareDefines[name] = JSON.stringify(createHash('sha256').update(await readFile(file)).digest('hex'));
+await build({ entryPoints: ['apps/desktop/main/release-recovery-history-worker-entry.ts'], outfile: 'dist/main/release-recovery-history-worker.cjs', bundle: true, platform: 'node', format: 'cjs', define: hardwareDefines });
+hardwareDefines.__FORGEDESK_STARTUP_HISTORY_WORKER_SHA256__ = JSON.stringify(createHash('sha256').update(await readFile('dist/main/release-recovery-history-worker.cjs')).digest('hex'));
+hardwareDefines.__FORGEDESK_STARTUP_HISTORY_HOST_SHA256__ = JSON.stringify(createHash('sha256').update(await readFile('vendor/process-host/process-host.exe')).digest('hex'));
 await build({ entryPoints: ['apps/desktop/main/index.ts'], outfile: 'dist/main/index.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'], sourcemap: true, define: hardwareDefines });
 await build({ entryPoints: ['apps/desktop/preload/index.ts'], outfile: 'dist/preload/index.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['electron'] });
 await build({ entryPoints: ['apps/desktop/renderer/index.tsx'], outfile: 'dist/renderer/index.js', bundle: true, platform: 'browser', format: 'esm', loader: { '.png': 'file', '.svg': 'file' }, sourcemap: true });

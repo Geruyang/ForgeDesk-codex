@@ -4,6 +4,14 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { discoverTestFiles, parseArguments, runTests } from '../scripts/run-tests.mjs';
 
+test('discovers main-process and other application source tests', () => {
+  const f = base({ 'apps/desktop/main': 'dir', 'apps/desktop/main/history.test.ts': 'file',
+    'apps/mcp': 'dir', 'apps/mcp/boundary.test.mjs': 'file', 'tests/control.test.ts': 'file' });
+  assert.deepEqual(discoverTestFiles(f.root, f.fs), [
+    'apps/desktop/main/history.test.ts', 'apps/mcp/boundary.test.mjs', 'tests/control.test.ts',
+  ]);
+});
+
 test('discovers renderer TSX, nested helpers and MJS omitted by the old entry', () => {
   const f = base({ 'apps/desktop/renderer/missed.test.tsx': 'file', 'packages/process-host': 'dir',
     'packages/process-host/covered.test.mjs': 'file', 'packages/unit': 'dir', 'packages/unit/covered.test.ts': 'file',

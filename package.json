@@ -1,6 +1,6 @@
 {
   "name": "forgedesk-codex",
-  "version": "0.5.7",
+  "version": "1.0.0",
   "private": true,
   "description": "Windows engineering agent workbench",
   "author": "ForgeDesk",
@@ -44,9 +44,27 @@
       "output": "release"
     },
     "files": [
-      "dist/**/*",
-      "package.json"
+      "dist/licenses/GestureScreen.txt",
+      "dist/licenses/lucide-react.txt",
+      "dist/licenses/react-dom.txt",
+      "dist/licenses/react.txt",
+      "dist/main/index.cjs",
+      "dist/mcp/index.cjs",
+      "dist/preload/index.cjs",
+      "dist/renderer/assets/brand.ico",
+      "dist/renderer/assets/brand.png",
+      "dist/renderer/index.css",
+      "dist/renderer/index.html",
+      "dist/renderer/index.js",
+      "package.json",
+      "!node_modules/**/*"
     ],
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "beforePack": "./scripts/release-package-audit.mjs",
+    "afterPack": "./scripts/release-package-audit.mjs",
+    "afterSign": "./scripts/release-package-audit.mjs",
+    "afterAllArtifactBuild": "./scripts/release-package-audit.mjs",
     "extraResources": [
       {
         "from": "vendor/codex",
@@ -83,6 +101,34 @@
       {
         "from": "vendor/host-failed-empty-intent",
         "to": "host-failed-empty-intent"
+      },
+      {
+        "from": "resources/licenses/Codex-LICENSE.txt",
+        "to": "licenses/Codex-LICENSE.txt"
+      },
+      {
+        "from": "resources/licenses/Codex-NOTICE.txt",
+        "to": "licenses/Codex-NOTICE.txt"
+      },
+      {
+        "from": "resources/licenses/libusb-1.0.30-COPYING.txt",
+        "to": "licenses/libusb-1.0.30-COPYING.txt"
+      },
+      {
+        "from": "resources/licenses/libusb-1.0.30-source.tar.gz",
+        "to": "licenses/libusb-1.0.30-source.tar.gz"
+      },
+      {
+        "from": "resources/licenses/libusb-package-1.0.30.0-source.tar.gz",
+        "to": "licenses/libusb-package-1.0.30.0-source.tar.gz"
+      },
+      {
+        "from": "resources/licenses/THIRD_PARTY_SOURCES.txt",
+        "to": "licenses/THIRD_PARTY_SOURCES.txt"
+      },
+      {
+        "from": "dist/main/release-recovery-history-worker.cjs",
+        "to": "startup-history/release-recovery-history-worker.cjs"
       }
     ],
     "win": {
@@ -94,7 +140,10 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "packElevateHelper": false,
+      "runAfterFinish": false,
+      "allowElevation": false
     },
     "artifactName": "ForgeDesk-${version}-${arch}-setup.${ext}"
   }
