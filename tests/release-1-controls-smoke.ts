@@ -19,7 +19,7 @@ import { assertAcceptanceUnchanged, assertMissingGitResult, assertMissingNodeRes
 import { assertControlsStopReceipt, installControlsStopObserver, readControlsStopObserver, restoreControlsStopObserver } from './helpers/controls-stop-observer';
 import { armControlsBoundary, installControlsBoundary, readControlsBoundary } from './helpers/release-1-controls-observer';
 import { CONTROLS_OUTPUT, ControlsGate, assertControlsSnapshot, assertFreshRefusal, assertOwnedWaitProcess, assertRefusalComplete,
-  assertReleaseDiagnostics, assertRestartSessions, controlsClosure, controlsRuntimeClosure, verifyControlsHarness, sanitizeControlsFailure, type ControlsCheckpoint, type WaitProcess, type ControlPhase } from './helpers/release-1-controls';
+  assertReleaseDiagnostics, assertRestartSessions, controlsClosure, controlsRuntimeClosure, verifyControlsHarness, sanitizeControlsFailure, assertControlsHostSnapshot, observeControlsModeLeave, type ControlsCheckpoint, type WaitProcess, type ControlPhase } from './helpers/release-1-controls';
 
 const installed = path.join(ROOT, 'install/ForgeDesk.exe'), dataDir = path.join(ROOT, '.runtime/app');
 const execute = promisify(execFile), ps = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
@@ -88,7 +88,7 @@ async function run(args: string[]) {
   let currentTask: string | undefined, projectId: string | undefined, stopId: string | undefined, refusalId: string | undefined, missingTask: string | undefined;
   let approval: Approval | undefined, expected: Session[] = [], firstMain: any, marker = `qa-controls-wait-snapshot-${Date.now()}`;
   const requestKey = `${plan.id}-mcp-refusal`, owned: string[] = [], errors: string[] = []; let observerSession: string | undefined;
-  let failed = false, checkpoint: ControlsCheckpoint = 'none';
+  let failed = false, controlled = false, checkpoint: ControlsCheckpoint = 'none';
   const parentPath = process.env.PATH;
   const live = () => assert.equal(failed, false, 'CONTROLS_HELD_NO_NEXT_ACTION');
   async function effect<T>(action: () => Promise<T>) { live(); const result = await action(); live(); return result; }
@@ -103,6 +103,10 @@ async function run(args: string[]) {
   async function snapshot() { assert.ok(page); const state: AppSnapshot = await effect(() => page!.evaluate(() => window.forgeDesk.snapshot()));
     checkpoint = 'snapshot-contract'; assertControlsSnapshot(state, dataDir, installed);
     assertHistorical(state, admission.host, undefined, id => { checkpoint = id; }); checkpoint = 'no-work'; assertNoWork(state, currentTask, Boolean(currentTask)); return state; }
+  async function hostSnapshot() { assert.ok(page); const state: AppSnapshot = await effect(() => page!.evaluate(() => window.forgeDesk.snapshot()));
+    checkpoint = 'host-snapshot-contract'; assertControlsHostSnapshot(state, dataDir, installed);
+    assertHistorical(state, admission.host, undefined, id => { checkpoint = id; }); checkpoint = 'no-work'; assertNoWork(state);
+    if (state.hardware.modeActive) assert.equal(state.engine.state, 'stopped'); controlled = state.hardware.modeActive === true; return state; }
   function own(state: AppSnapshot, id: string) { const session = state.sessions.find(s => s.id === id); assert.ok(session); return session; }
   async function waitFor(test: (state: AppSnapshot) => boolean, timeout = 120000) {
     const until = Date.now() + timeout;
@@ -110,16 +114,20 @@ async function run(args: string[]) {
     throw new Error('Control observation timed out; action was not retried');
   }
   async function launch(missing = false) {
-    live(); await effect(() => readPersistedQuiet()); lifecycle ??= await prepareSnapshotInstalledLifecycle(ROOT, installed); await lifecycle.beforeLaunch(); live();
-    const { _electron: electron } = await import('playwright');
-    app = await electron.launch({ executablePath: installed, args: [], cwd: missing ? emptyPath : ROOT, timeout: 30000,
+    checkpoint = 'launch-persisted-quiet'; live(); await effect(() => readPersistedQuiet());
+    checkpoint = 'launch-lifecycle-prepare'; lifecycle ??= await prepareSnapshotInstalledLifecycle(ROOT, installed);
+    checkpoint = 'launch-lifecycle-before'; await lifecycle.beforeLaunch(); live();
+    checkpoint = 'launch-playwright-import'; const { _electron: electron } = await import('playwright');
+    checkpoint = 'launch-application'; app = await electron.launch({ executablePath: installed, args: [], cwd: missing ? emptyPath : ROOT, timeout: 30000,
       env: missing ? missingToolsAppEnvironment(launchEnvironment(process.env, dataDir), emptyPath, dataDir) : launchEnvironment(process.env, dataDir) });
-    const launch = await lifecycle.attach(app); if (failed) { lifecycle.protectOnFailure(); live(); }
-    await effect(() => app!.evaluate(installControlsBoundary, admission.release.electronVersion));
-    page = await app.firstWindow(); page.on('pageerror', () => errors.push('CONTROLS_RENDERER_PAGE_ERROR'));
-    await page.locator('.app-header').waitFor(); await page.setViewportSize({ width: 1380, height: 900 });
-    if (missing) assert.equal(await app.evaluate(() => process.env.PATH), emptyPath);
-    return launch;
+    checkpoint = 'launch-native-attach'; const launch = await lifecycle.attach(app); if (failed) { lifecycle.protectOnFailure(); live(); }
+    checkpoint = 'launch-first-window'; page = await app.firstWindow(); page.on('pageerror', () => errors.push('CONTROLS_RENDERER_PAGE_ERROR'));
+    checkpoint = 'launch-header'; await page.locator('.app-header').waitFor({ state: 'visible', timeout: 30000 });
+    checkpoint = 'launch-viewport'; await page.setViewportSize({ width: 1380, height: 900 });
+    checkpoint = 'launch-boundary-install'; await effect(() => app!.evaluate(installControlsBoundary, admission.release.electronVersion));
+    if (missing) { checkpoint = 'launch-child-path'; assert.equal(await app.evaluate(() => process.env.PATH), emptyPath); }
+    checkpoint = 'launch-host-observation'; await hostSnapshot();
+    return { ...launch, controlledModeActive: controlled, coverage: 'Boundary installed only after verified native attach, real first window and visible app-header; no pre-hook IPC absence claim.' };
   }
   async function newSession(title: string) {
     assert.ok(page && projectId); const value = await invoke<Session>('createSession', [projectId, title]);
@@ -127,8 +135,9 @@ async function run(args: string[]) {
   }
   async function close() { assert.ok(lifecycle && app); await boundary(); const result = await effect(() => lifecycle!.closeNormally()); app = undefined; page = undefined; return result; }
   async function phaseAction(phase: ControlPhase): Promise<any> {
-    await effect(() => verifyPlan(plan));
+    checkpoint = 'phase-verify'; await effect(() => verifyPlan(plan));
     if (phase === 'launch') { const value = await launch(); firstMain = value.nativeMain; return { launch: value }; }
+    if (['leave-mode', 'restart-leave', 'missing-leave'].includes(phase)) return observeControlsModeLeave(hostSnapshot, boundary, () => invoke('fz3bLeaveMode', []), id => { checkpoint = id; });
     if (phase === 'connect') {
       const before = await snapshot(); assertNoWork(before); assert.equal(before.engine.state, 'ready', 'Explicit connection requires a naturally ready idle engine');
       await invoke('connect', []); const after = await snapshot(); assertNoWork(after); assert.equal(after.engine.state, 'ready'); assert.equal(after.account.loggedIn, true);
@@ -237,7 +246,7 @@ async function run(args: string[]) {
     held = (async () => {
       try {
         await writeNew(path.join(output, 'held.json'), { schemaVersion: 1, scope: 'release-1-controls-held-v1', id: plan.id, planSha256: planSha, candidateSha256: plan.candidateSha256,
-          next: gate.next ?? null, predecessorSha256: gate.predecessor, failure: sanitizeControlsFailure(error, checkpoint), observerSession: observerSession ?? null,
+          next: gate.expected(controlled) ?? null, predecessorSha256: gate.predecessor, failure: sanitizeControlsFailure(error, checkpoint), observerSession: observerSession ?? null,
           lifecycle: lifecycle?.evidence ?? null, protection: protection ?? null, automaticInterruptOrDecisionAttempted: false, finishedAt: new Date().toISOString() });
       } catch { console.error('CONTROLS_HELD_EVIDENCE_UNAVAILABLE'); }
       console.error('CONTROLS_HELD: original pending work is preserved; no automatic cancel, decision, retry or close.'); finished();
@@ -246,7 +255,7 @@ async function run(args: string[]) {
   const abort = () => { void hold(new Error('CONTROLS_ROOT_INPUT_OR_SIGNAL')); };
   process.on('SIGINT', abort); process.on('SIGTERM', abort); process.stdout.on('error', abort); process.stderr.on('error', abort);
   input.on('line', line => {
-    let phase: ControlPhase; try { phase = gate.arm(line); } catch (error) { void hold(error); return; }
+    let phase: ControlPhase; try { checkpoint = 'gate-arm'; phase = gate.arm(line, controlled); } catch (error) { void hold(error); return; }
     const prior = gate.predecessor, startedAt = new Date().toISOString();
     void (async () => {
       await effect(() => writeNew(path.join(output, `${phase}.pending.json`), { schemaVersion: 1, scope: 'release-1-controls-pending-v1', id: plan.id, planSha256: planSha, candidateSha256: plan.candidateSha256, phase, predecessorSha256: prior, startedAt }));
@@ -254,12 +263,12 @@ async function run(args: string[]) {
       await effect(() => verifyPlan(plan));
       const pin = await effect(() => writeNew(path.join(output, `${phase}.json`), { schemaVersion: 1, scope: 'release-1-controls-phase-v1', version: '1.0.0', id: plan.id,
         planSha256: planSha, candidateSha256: plan.candidateSha256, phase, predecessorSha256: prior, result: 'passed', startedAt, finishedAt: new Date().toISOString(), facts, ipc, noAutomaticNextPhase: true }));
-      gate.complete(phase, pin); console.log(JSON.stringify({ phase, recordSha256: pin, next: gate.next ?? null, completed: gate.done, noAutomaticNextPhase: true }));
+      gate.complete(phase, pin); console.log(JSON.stringify({ phase, recordSha256: pin, next: gate.expected(controlled) ?? null, controlledModeActive: controlled, completed: gate.done, noAutomaticNextPhase: true }));
       if (gate.done) { input.close(); finished(); }
     })().catch(error => hold(error));
   });
   input.on('close', () => { if (!gate.done) abort(); });
-  console.log(JSON.stringify({ next: gate.next, predecessorSha256: gate.predecessor, optionalConnectBeforeReady: 'At most one separately root-armed connect phase; no automatic attempt', noAutomaticNextPhase: true })); await completion;
+  console.log(JSON.stringify({ next: gate.expected(controlled), predecessorSha256: gate.predecessor, optionalConnectBeforeReady: 'At most one separately root-armed connect phase; no automatic attempt', controlledModeLeave: 'Each controlled launch requires its own exact root arm; original local leave revokes grants and connects, never remote qualification', noAutomaticNextPhase: true })); await completion;
   if (!failed) { process.removeListener('SIGINT', abort); process.removeListener('SIGTERM', abort); process.stdout.removeListener('error', abort); process.stderr.removeListener('error', abort); }
   input.close();
 }

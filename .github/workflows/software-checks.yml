@@ -22,11 +22,16 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
-      NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/forgedesk-ci-user.npmrc
-      NPM_CONFIG_GLOBALCONFIG: ${{ runner.temp }}/forgedesk-ci-global.npmrc
     steps:
-      - name: Preserve Reviewed Checkout Bytes
-        run: git config --global core.autocrlf false
+      - name: Initialize Isolated Npm Config And Checkout Bytes
+        run: |
+          $env:NPM_CONFIG_USERCONFIG = Join-Path $env:RUNNER_TEMP 'forgedesk-ci-user.npmrc'
+          $env:NPM_CONFIG_GLOBALCONFIG = Join-Path $env:RUNNER_TEMP 'forgedesk-ci-global.npmrc'
+          New-Item -ItemType File -Path $env:NPM_CONFIG_USERCONFIG -Force | Out-Null
+          New-Item -ItemType File -Path $env:NPM_CONFIG_GLOBALCONFIG -Force | Out-Null
+          "NPM_CONFIG_USERCONFIG=$env:NPM_CONFIG_USERCONFIG" >> $env:GITHUB_ENV
+          "NPM_CONFIG_GLOBALCONFIG=$env:NPM_CONFIG_GLOBALCONFIG" >> $env:GITHUB_ENV
+          git config --global core.autocrlf false
 
       - name: Checkout Reviewed Event Commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,8 +50,6 @@ jobs:
 
       - name: Check Public Lock Sources Before Installation
         run: |
-          New-Item -ItemType File -Path $env:NPM_CONFIG_USERCONFIG -Force | Out-Null
-          New-Item -ItemType File -Path $env:NPM_CONFIG_GLOBALCONFIG -Force | Out-Null
           @'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';

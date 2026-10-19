@@ -29,8 +29,9 @@ export function installControlsBoundary({ ipcMain, dialog }: { ipcMain: any; dia
 export function armControlsBoundary({ ipcMain }: { ipcMain: any }, queue: { method: string; args: unknown[]; expectedRejection?: boolean; projectRoot?: string }[]) {
   const state = (globalThis as any).__release1ControlsBoundary;
   if (!state || state.map !== ipcMain._invokeHandlers || state.map.get('forgedesk:invoke') !== state.wrapper || state.queue.length || state.forbidden || state.nativePrompts || state.calls.some((c: any) => c.phase === 'started')) throw Error('CONTROLS_BOUNDARY_NOT_QUIET');
-  const allowed = ['importProject', 'createSession', 'send', 'interrupt', 'approve', 'setAcceptance', 'exportDiagnostics', 'connect'];
+  const allowed = ['importProject', 'createSession', 'send', 'interrupt', 'approve', 'setAcceptance', 'exportDiagnostics', 'connect', 'fz3bLeaveMode'];
   if (!Array.isArray(queue) || queue.length < 1 || queue.length > 2 || queue.some(q => !allowed.includes(q.method) || !Array.isArray(q.args))) throw Error('CONTROLS_BOUNDARY_BAD_ARM');
+  if (queue.some(q => q.method === 'fz3bLeaveMode' && (queue.length !== 1 || q.args.length !== 0 || q.expectedRejection === true))) throw Error('CONTROLS_BOUNDARY_BAD_ARM');
   state.queue = queue;
 }
 export function readControlsBoundary({ ipcMain }: { ipcMain: any }) {

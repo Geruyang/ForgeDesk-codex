@@ -12,6 +12,8 @@ Node is fixed to **24.21.0 x64**, the local version used for the selected verifi
 
 Before installation, the lockfile must match the root name/version and every non-root package must have an HTTPS `registry.npmjs.org` URL and SHA512 integrity. Linked, custom-registry and credential-bearing URLs refuse. npm user/global config paths are two empty job-temporary files; no npm token is supplied. Installation is exactly:
 
+The first `run` step derives both npm config paths from PowerShell's `$env:RUNNER_TEMP`, creates the empty files, sets the current process variables, and writes both paths to `$env:GITHUB_ENV`. Checkout/setup and every subsequent npm invocation therefore receive the same paths. These paths are not expressions in job-level `env`: GitHub's [context availability table](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability) does not permit `runner` there, so `${{ runner.temp }}` at that level rejects the workflow before runner assignment. [The environment-file contract](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-an-environment-variable) makes `GITHUB_ENV` values available to later steps, not to the step that writes them; the explicit process assignments cover the initial step itself. No local/global developer npm configuration is read or changed by this initialization.
+
 ```powershell
 npm ci --ignore-scripts --include=dev --include=optional --no-audit --no-fund --registry=https://registry.npmjs.org/
 ```

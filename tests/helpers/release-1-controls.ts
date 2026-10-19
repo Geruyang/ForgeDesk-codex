@@ -12,14 +12,18 @@ export const CONTROLS_OUTPUT = 'output/release-1.0/controls';
 export const CONTROLS_BOOTSTRAP = 'tests/helpers/release-1-controls-bootstrap.mjs';
 export const CONTROLS_ENTRIES = ['tests/release-1-controls-smoke.ts', 'tests/helpers/release-1-controls.ts', 'tests/helpers/release-1-controls.test.ts', CONTROLS_BOOTSTRAP];
 export const CONTROL_PHASES = ['launch', 'ready', 'stop', 'mcp-request', 'reload', 'refuse', 'diagnostics', 'close-a', 'restart', 'restart-verify', 'close-b', 'missing-launch', 'missing-tools', 'missing-close'] as const;
-const FAILURE_CHECKPOINTS = ['none', 'snapshot-contract', 'no-work', 'history-primary-identity', 'history-primary-immutable', 'history-primary-owner', 'history-primary-release', 'history-extra-inspect', 'history-hardware'] as const;
+const FAILURE_CHECKPOINTS = ['none', 'snapshot-contract', 'host-snapshot-contract', 'no-work', 'history-primary-identity', 'history-primary-immutable', 'history-primary-owner', 'history-primary-release', 'history-extra-inspect', 'history-hardware', 'gate-arm', 'phase-verify', 'launch-persisted-quiet', 'launch-lifecycle-prepare', 'launch-lifecycle-before', 'launch-playwright-import', 'launch-application', 'launch-native-attach', 'launch-first-window', 'launch-header', 'launch-viewport', 'launch-boundary-install', 'launch-child-path', 'launch-host-observation', 'mode-leave-preflight', 'mode-leave-ipc', 'mode-leave-receipt', 'mode-leave-postflight'] as const;
+const FAILURE_CAUSES = ['CONTROLS_ELECTRON_MISMATCH', 'CONTROLS_BOUNDARY_UNAVAILABLE', 'CONTROLS_BOUNDARY_NOT_QUIET', 'CONTROLS_BOUNDARY_BAD_ARM', 'CONTROLS_BOUNDARY_CHANGED', 'CONTROLS_IPC_NOT_ARMED', 'CONTROLS_PROJECT_ROOT_MISMATCH', 'CONTROLS_HELD_NO_NEXT_ACTION', 'CONTROLS_PHASE_HELD'] as const;
 export type ControlsCheckpoint = typeof FAILURE_CHECKPOINTS[number];
 export function sanitizeControlsFailure(error: unknown, checkpoint: unknown) {
   let reason: 'ASSERTION' | 'TIMEOUT' | 'OTHER' = 'OTHER';
-  try { if (error instanceof Error) { if ((error as NodeJS.ErrnoException).code === 'ERR_ASSERTION') reason = 'ASSERTION'; else if (error.name === 'TimeoutError') reason = 'TIMEOUT'; } } catch { reason = 'OTHER'; }
-  return { reason, checkpoint: FAILURE_CHECKPOINTS.includes(checkpoint as ControlsCheckpoint) ? checkpoint as ControlsCheckpoint : 'none' };
+  let cause: typeof FAILURE_CAUSES[number] | 'none' = 'none';
+  try { if (error instanceof Error) { if ((error as NodeJS.ErrnoException).code === 'ERR_ASSERTION') reason = 'ASSERTION'; else if (error.name === 'TimeoutError') reason = 'TIMEOUT';
+    const message = error.message; for (const known of FAILURE_CAUSES) if (message === known || message.endsWith('Error: ' + known) || message.includes('Error: ' + known + '\n')) { cause = known; break; }
+  } } catch { reason = 'OTHER'; cause = 'none'; }
+  return { reason, checkpoint: FAILURE_CHECKPOINTS.includes(checkpoint as ControlsCheckpoint) ? checkpoint as ControlsCheckpoint : 'none', cause };
 }
-export type ControlPhase = typeof CONTROL_PHASES[number] | 'connect';
+export type ControlPhase = typeof CONTROL_PHASES[number] | 'connect' | 'leave-mode' | 'restart-leave' | 'missing-leave';
 export interface ControlsHarness {
   schemaVersion: 1; scope: 'release-1-controls-harness-v2'; version: '1.0.0'; candidateSha256: string;
   sources: Pin[]; node: Pin; runtimePackages: string[]; runtimePins: Pin[];
@@ -74,18 +78,26 @@ export async function verifyControlsHarness(file: string, pin: string, candidate
   return value;
 }
 export class ControlsGate {
-  #index = 0; #held = false; #busy = false; #connected = false; #armed?: ControlPhase;
+  #index = 0; #held = false; #busy = false; #connected = false; #armed?: ControlPhase; #left = new Set<ControlPhase>();
   constructor(private previous: string) { assert.match(previous, SHA); }
   get predecessor() { return this.previous; } get next() { return CONTROL_PHASES[this.#index]; }
   get held() { return this.#held; } get done() { return this.#index === CONTROL_PHASES.length; }
-  arm(line: string): ControlPhase {
-    try { assert.ok(!this.#held && !this.#busy && !this.done); const phase: ControlPhase = this.next === 'ready' && !this.#connected && line === `connect ${this.previous}` ? 'connect' : this.next;
+  expected(controlled = false): ControlPhase | undefined {
+    const leave: ControlPhase | undefined = this.next === 'ready' ? 'leave-mode' : this.next === 'restart-verify' ? 'restart-leave' : this.next === 'missing-tools' ? 'missing-leave' : undefined;
+    return controlled && leave && !this.#left.has(leave) ? leave : this.next;
+  }
+  arm(line: string, controlled = false): ControlPhase {
+    try { assert.ok(!this.#held && !this.#busy && !this.done); const expected = this.expected(controlled)!;
+      const phase: ControlPhase = expected === 'ready' && !this.#connected && line === `connect ${this.previous}` ? 'connect' : expected;
+      if (['ready', 'connect', 'restart-verify', 'missing-tools'].includes(phase)) assert.equal(controlled, false);
       assert.equal(line, `${phase} ${this.previous}`); this.#busy = true; return this.#armed = phase; }
     catch { this.fail(); throw new Error('CONTROLS_PHASE_HELD'); }
   }
   complete(phase: ControlPhase, pin: string) {
     assert.ok(this.#busy && !this.#held); assert.equal(phase, this.#armed); assert.match(pin, SHA);
-    if (phase === 'connect') { assert.equal(this.next, 'ready'); assert.equal(this.#connected, false); this.#connected = true; } else this.#index++;
+    if (phase === 'connect') { assert.equal(this.next, 'ready'); assert.equal(this.#connected, false); this.#connected = true; }
+    else if (['leave-mode', 'restart-leave', 'missing-leave'].includes(phase)) { assert.equal(this.expected(true), phase); assert.equal(this.#left.has(phase), false); this.#left.add(phase); }
+    else this.#index++;
     this.previous = pin; this.#busy = false; this.#armed = undefined;
   }
   fail() { this.#held = true; }
@@ -146,8 +158,25 @@ export function assertRestartSessions(state: AppSnapshot, expected: Session[]) {
     assert.deepEqual(current.messages, old.messages); assert.equal(state.tasks.find(t => t.id === old.taskId)!.operations.length, 0);
   }
 }
-export function assertControlsSnapshot(state: AppSnapshot, dataDir: string, installed: string) {
-  assert.equal(state.version, '1.0.0'); assert.ok(samePath(state.dataDir, dataDir)); assert.equal(state.hardware.enabled, false); assert.equal(state.hardware.modeActive, false);
+export function assertControlsHostSnapshot(state: AppSnapshot, dataDir: string, installed: string) {
+  assert.equal(state.version, '1.0.0'); assert.ok(samePath(state.dataDir, dataDir)); assert.equal(state.hardware.enabled, false); assert.equal(typeof state.hardware.modeActive, 'boolean');
   assert.ok(samePath(state.engine.home, path.join(dataDir, 'engine')));
   if (state.engine.executable) assert.ok(samePath(state.engine.executable, path.join(path.dirname(installed), 'resources/codex/codex.exe')));
+}
+export function assertControlsSnapshot(state: AppSnapshot, dataDir: string, installed: string) {
+  assertControlsHostSnapshot(state, dataDir, installed); assert.equal(state.hardware.modeActive, false);
+}
+interface ModeLeaveReceipt { forbiddenCount: number; nativePromptCount: number; remainingArms: number; calls: { method: string; phase: string; argumentsValid: boolean }[] }
+export async function observeControlsModeLeave(readHost: () => Promise<AppSnapshot>, readBoundary: () => Promise<ModeLeaveReceipt>, invokeOriginal: () => Promise<unknown>, checkpoint: (id: ControlsCheckpoint) => void = () => {}) {
+  checkpoint('mode-leave-preflight'); const before = await readHost(); assert.equal(before.hardware.modeActive, true);
+  const prior = await readBoundary(); assert.equal(prior.forbiddenCount, 0); assert.equal(prior.nativePromptCount, 0); assert.equal(prior.remainingArms, 0);
+  checkpoint('mode-leave-ipc'); await invokeOriginal();
+  checkpoint('mode-leave-receipt'); const ipc = await readBoundary();
+  assert.equal(ipc.forbiddenCount, 0); assert.equal(ipc.nativePromptCount, 0); assert.equal(ipc.remainingArms, 0);
+  assert.deepEqual(ipc.calls.slice(0, prior.calls.length), prior.calls); const calls = ipc.calls.slice(prior.calls.length);
+  assert.equal(calls.length, 1); assert.equal(calls[0].method, 'fz3bLeaveMode'); assert.equal(calls[0].phase, 'fulfilled'); assert.equal(calls[0].argumentsValid, true);
+  checkpoint('mode-leave-postflight'); const after = await readHost(); assert.equal(after.hardware.modeActive, false);
+  assert.deepEqual(after.fz3bAgent?.runs, before.fz3bAgent?.runs); assert.deepEqual(after.hardwareAgent?.runs, before.hardwareAgent?.runs);
+  return { originalCalls: 1, beforeControlledMode: true, afterControlledMode: false, ipc: calls, historicalRunsUnchanged: true,
+    ordinaryConnectIsPartOfOriginalProductMethod: true, explicitRootArmedMutation: true, remoteOrNewBootQualificationGranted: false };
 }

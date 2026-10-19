@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import vm from 'node:vm';
+import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import type { AppSnapshot, Approval, Session } from '../../packages/shared/contracts';
 import { CONTROL_PHASES, CONTROLS_ENTRIES, ControlsGate, assertControlsHarness, assertFreshRefusal, assertOwnedWaitProcess,
@@ -19,10 +21,13 @@ test('controls failure output never serializes raw errors and uses only closed h
   assert.match(source, /failure: sanitizeControlsFailure\(error, checkpoint\)/);
   const { sanitizeControlsFailure } = await import('./release-1-controls');
   const error = Object.assign(Error('PRIVATE_ERROR'), { code: 'ERR_ASSERTION', actual: 'PRIVATE_ACTUAL' });
-  assert.deepEqual(sanitizeControlsFailure(error, 'history-extra-inspect'), { reason: 'ASSERTION', checkpoint: 'history-extra-inspect' });
-  assert.deepEqual(sanitizeControlsFailure({ secret: 'PRIVATE' }, 'PRIVATE_CHECKPOINT'), { reason: 'OTHER', checkpoint: 'none' });
+  assert.deepEqual(sanitizeControlsFailure(error, 'history-extra-inspect'), { reason: 'ASSERTION', checkpoint: 'history-extra-inspect', cause: 'none' });
+  assert.deepEqual(sanitizeControlsFailure({ secret: 'PRIVATE' }, 'PRIVATE_CHECKPOINT'), { reason: 'OTHER', checkpoint: 'none', cause: 'none' });
+  assert.equal(sanitizeControlsFailure(Error('CONTROLS_BOUNDARY_UNAVAILABLE'), 'launch-boundary-install').cause, 'CONTROLS_BOUNDARY_UNAVAILABLE');
+  const wrapped = sanitizeControlsFailure(Error('electronApplication.evaluate: Error: CONTROLS_BOUNDARY_UNAVAILABLE\nPRIVATE_STACK'), 'launch-boundary-install');
+  assert.equal(wrapped.cause, 'CONTROLS_BOUNDARY_UNAVAILABLE'); assert.equal(JSON.stringify(wrapped).includes('PRIVATE'), false);
   const hostile = Error(); Object.defineProperty(hostile, 'code', { get() { throw Error('PRIVATE_GETTER'); } });
-  assert.deepEqual(sanitizeControlsFailure(hostile, 'none'), { reason: 'OTHER', checkpoint: 'none' });
+  assert.deepEqual(sanitizeControlsFailure(hostile, 'none'), { reason: 'OTHER', checkpoint: 'none', cause: 'none' });
 });
 function fixture() {
   const session = { id: 'session', taskId: 'task', threadId: 'thread', turnId: 'turn', status: 'running', messages: [] } as unknown as Session;
@@ -34,6 +39,86 @@ function fixture() {
   const state = { approvals: [approval], sessions: [session], tasks: [{ id: 'task', operations: [] }] } as unknown as AppSnapshot;
   return { session, approval, state };
 }
+test('startup waits for the real window and header before installing a self-contained serialized boundary', async () => {
+  const source = await readFile(new URL('../release-1-controls-smoke.ts', import.meta.url), 'utf8');
+  assert.ok(source.indexOf('page = await app.firstWindow()') < source.indexOf('app!.evaluate(installControlsBoundary'));
+  assert.ok(source.indexOf("page.locator('.app-header').waitFor") < source.indexOf('app!.evaluate(installControlsBoundary'));
+  const { tsImport } = await import('tsx/esm/api');
+  const actual = await tsImport(pathToFileURL(path.resolve('tests/helpers/release-1-controls-observer.ts')).href,
+    { parentURL: pathToFileURL(path.resolve('package.json')).href, tsconfig: false });
+  for (const name of ['installControlsBoundary', 'armControlsBoundary', 'readControlsBoundary']) assert.equal(actual[name].toString().includes('__name'), false);
+  const context = vm.createContext({ process: { versions: { electron: '44.7.2' } } });
+  vm.runInContext('globalThis.surface={ipcMain:{_invokeHandlers:new Map()},dialog:{showMessageBox:async function(){return {response:0}}}}', context);
+  assert.throws(() => vm.runInContext(`(${actual.installControlsBoundary.toString()})(surface,"44.7.2")`, context), { message: 'CONTROLS_BOUNDARY_UNAVAILABLE' });
+  assert.equal(vm.runInContext('globalThis.__release1ControlsBoundary', context), undefined);
+  vm.runInContext('surface.ipcMain._invokeHandlers.set("forgedesk:invoke",async function(){return {original:true}})', context);
+  assert.equal(vm.runInContext(`(${actual.installControlsBoundary.toString()})(surface,"44.7.2")`, context).installed, true);
+});
+test('controlled launch cannot skip leave or use a wrong predecessor, and cannot leave twice', () => {
+  for (const line of [`ready ${nextPin}`, `connect ${nextPin}`, `leave-mode ${pin}`]) {
+    const gate = new ControlsGate(pin); gate.arm(`launch ${pin}`); gate.complete('launch', nextPin);
+    assert.throws(() => gate.arm(line, true)); assert.equal(gate.held, true);
+  }
+});
+test('all three launches require their own separately armed leave only when controlled', () => {
+  const gate = new ControlsGate(pin), leave = new Map([['ready', 'leave-mode'], ['restart-verify', 'restart-leave'], ['missing-tools', 'missing-leave']]);
+  for (const phase of CONTROL_PHASES) {
+    const special = leave.get(phase);
+    if (special) {
+      assert.equal(gate.expected(true), special); assert.equal(gate.arm(`${special} ${gate.predecessor}`, true), special);
+      gate.complete(special as any, nextPin); assert.equal(gate.expected(false), phase);
+    }
+    assert.equal(gate.arm(`${phase} ${gate.predecessor}`, false), phase); gate.complete(phase, pin);
+  }
+  assert.equal(gate.done, true);
+  const duplicate = new ControlsGate(pin); duplicate.arm(`launch ${pin}`); duplicate.complete('launch', nextPin);
+  duplicate.arm(`leave-mode ${nextPin}`, true); duplicate.complete('leave-mode' as any, pin);
+  assert.throws(() => duplicate.arm(`leave-mode ${pin}`, false));
+});
+test('readonly host observation permits controlled mode but ordinary controls remain mode-false only', async () => {
+  const { assertControlsHostSnapshot, assertControlsSnapshot } = await import('./release-1-controls');
+  assert.equal(typeof assertControlsHostSnapshot, 'function');
+  const root = path.resolve('E:/fixed-data'), installed = path.resolve('E:/fixed-install/ForgeDesk.exe');
+  const state: any = { version: '1.0.0', dataDir: root, hardware: { enabled: false, modeActive: true }, engine: { state: 'stopped', home: path.join(root, 'engine'), executable: path.join(path.dirname(installed), 'resources/codex/codex.exe') } };
+  assertControlsHostSnapshot(state, root, installed); assert.throws(() => assertControlsSnapshot(state, root, installed));
+  state.hardware.modeActive = false; assertControlsSnapshot(state, root, installed);
+  state.hardware.modeActive = 'false'; assert.throws(() => assertControlsHostSnapshot(state, root, installed));
+});
+test('mode leave invokes exactly one original zero-argument action and stops on any preflight or original rejection', async () => {
+  const { observeControlsModeLeave } = await import('./release-1-controls'); assert.equal(typeof observeControlsModeLeave, 'function');
+  let reads = 0, invoked = 0; const calls: any[] = [], checkpoints: string[] = [];
+  const read = async () => ({ hardware: { modeActive: ++reads === 1 }, fz3bAgent: { runs: [{ immutable: true }] } }) as any;
+  const boundary = async () => ({ calls: [...calls], forbiddenCount: 0, nativePromptCount: 0, remainingArms: 0 });
+  const value = await observeControlsModeLeave(read, boundary, async () => { invoked++; calls.push({ method: 'fz3bLeaveMode', phase: 'fulfilled', argumentsValid: true }); }, id => checkpoints.push(id));
+  assert.equal(invoked, 1); assert.equal(reads, 2); assert.equal(value.originalCalls, 1); assert.equal(value.ordinaryConnectIsPartOfOriginalProductMethod, true);
+  assert.deepEqual(checkpoints, ['mode-leave-preflight', 'mode-leave-ipc', 'mode-leave-receipt', 'mode-leave-postflight']);
+  for (const failedBefore of [true, false]) {
+    let attempted = 0, snapshots = 0;
+    await assert.rejects(observeControlsModeLeave(async () => { snapshots++; if (failedBefore) throw Error('NONTERMINAL_HISTORY'); return { hardware: { modeActive: true } } as any; }, boundary,
+      async () => { attempted++; throw Error('ORIGINAL_REJECTED'); }));
+    assert.equal(attempted, failedBefore ? 0 : 1); assert.equal(snapshots, 1);
+  }
+  let earlyCalls = 0; await assert.rejects(observeControlsModeLeave(async () => ({ hardware: { modeActive: false } }) as any, boundary, async () => { earlyCalls++; })); assert.equal(earlyCalls, 0);
+  let pendingReads = 0, pendingCalls = 0, release!: () => void; const pendingReceipts: any[] = [];
+  const pending = observeControlsModeLeave(async () => ({ hardware: { modeActive: ++pendingReads === 1 } }) as any,
+    async () => ({ calls: [...pendingReceipts], forbiddenCount: 0, nativePromptCount: 0, remainingArms: 0 }),
+    async () => { pendingCalls++; await new Promise<void>(resolve => { release = resolve; }); pendingReceipts.push({ method: 'fz3bLeaveMode', phase: 'fulfilled', argumentsValid: true }); });
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(pendingCalls, 1); assert.equal(pendingReads, 1);
+  release(); await pending; assert.equal(pendingReads, 2); assert.equal(pendingCalls, 1);
+});
+test('leave boundary accepts only a single zero-argument original method and never permits replay', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(process.versions, 'electron'), host = globalThis as any; let calls = 0;
+  Object.defineProperty(process.versions, 'electron', { value: '44.7.2', configurable: true });
+  const response = { original: true }, ipcMain = { _invokeHandlers: new Map([['forgedesk:invoke', async () => { calls++; return response; }]]) }, dialog = { showMessageBox: async () => ({ response: 0 }) };
+  try {
+    installControlsBoundary({ ipcMain, dialog }, '44.7.2');
+    assert.throws(() => armControlsBoundary({ ipcMain }, [{ method: 'fz3bLeaveMode', args: ['foreign'] }]));
+    assert.throws(() => armControlsBoundary({ ipcMain }, [{ method: 'fz3bLeaveMode', args: [] }, { method: 'connect', args: [] }]));
+    armControlsBoundary({ ipcMain }, [{ method: 'fz3bLeaveMode', args: [] }]);
+    const invoke = ipcMain._invokeHandlers.get('forgedesk:invoke')! as any;
+    assert.equal(await invoke({}, 'fz3bLeaveMode', []), response); await assert.rejects(invoke({}, 'fz3bLeaveMode', [])); assert.equal(calls, 1);
+  } finally { delete host.__release1ControlsBoundary; if (descriptor) Object.defineProperty(process.versions, 'electron', descriptor); else delete (process.versions as any).electron; }
+});
 test('controls phases require exact current predecessor and stop permanently on mismatch', () => {
   const gate = new ControlsGate(pin); assert.equal(gate.next, 'launch');
   assert.throws(() => gate.arm(`ready ${pin}`)); assert.equal(gate.held, true); assert.throws(() => gate.arm(`launch ${pin}`));
@@ -139,7 +224,7 @@ test('new entry uses shared release binding and never launches old identity/pin 
   const source = await readFile(new URL('../release-1-controls-smoke.ts', import.meta.url), 'utf8');
   assert.match(source, /verifyRelease/); assert.match(source, /verifyControlsHarness/); assert.match(source, /readHostAdmission/); assert.match(source, /assertHistorical/);
   assert.doesNotMatch(source, /prepareSnapshotScope|FORGEDESK_SNAPSHOT_SECOND_USER|0\.2\.1|taskkill|Stop-Process|\.kill\(/);
-  assert.match(source, /gate\.arm\(line\)/); assert.match(source, /protectOnFailure/); assert.match(source, /automaticInterruptOrDecisionAttempted: false/);
+  assert.match(source, /gate\.arm\(line, controlled\)/); assert.match(source, /protectOnFailure/); assert.match(source, /automaticInterruptOrDecisionAttempted: false/);
 });
 test('original IPC boundary rejects device calls and argument drift without forwarding or fabricating results', async () => {
   const descriptor = Object.getOwnPropertyDescriptor(process.versions, 'electron'), host = globalThis as any;
