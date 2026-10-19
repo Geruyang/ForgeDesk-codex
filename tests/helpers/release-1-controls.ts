@@ -6,7 +6,7 @@ import type { Page } from 'playwright';
 import type { AppSnapshot, Approval, Session } from '../../packages/shared/contracts';
 import { ROOT, SHA, closed, readStable, sha, type Pin } from './release-1-files';
 import { inside, samePath } from './embedded-installed';
-import { assertMcpDenialApproval, diagnosticsFields, refusedMcpItem } from './second-user-controls';
+import { assertMcpDenialApproval, assertWaitCommand, diagnosticsFields, refusedMcpItem } from './second-user-controls';
 import type { InstalledMainProcess } from './second-user-controls';
 
 export const CONTROLS_OUTPUT = 'output/release-1.0/controls';
@@ -16,14 +16,19 @@ export const CONTROL_PHASES = ['launch', 'ready', 'stop', 'mcp-request', 'reload
 const FAILURE_CHECKPOINTS = ['none', 'snapshot-contract', 'host-snapshot-contract', 'no-work', 'history-primary-identity', 'history-primary-immutable', 'history-primary-owner', 'history-primary-release', 'history-extra-inspect', 'history-hardware', 'gate-arm', 'phase-verify', 'launch-persisted-quiet', 'launch-lifecycle-prepare', 'launch-lifecycle-before', 'launch-playwright-import', 'launch-application', 'launch-native-attach', 'launch-first-window', 'launch-header', 'launch-viewport', 'launch-boundary-install', 'launch-child-path', 'launch-host-observation', 'mode-leave-preflight', 'mode-leave-ipc', 'mode-leave-receipt', 'mode-leave-postflight'] as const;
 const FAILURE_CAUSES = ['CONTROLS_ELECTRON_MISMATCH', 'CONTROLS_BOUNDARY_UNAVAILABLE', 'CONTROLS_BOUNDARY_NOT_QUIET', 'CONTROLS_BOUNDARY_BAD_ARM', 'CONTROLS_BOUNDARY_CHANGED', 'CONTROLS_IPC_NOT_ARMED', 'CONTROLS_PROJECT_ROOT_MISMATCH', 'CONTROLS_HELD_NO_NEXT_ACTION', 'CONTROLS_PHASE_HELD'] as const;
 const SESSION_CHECKPOINTS = ['session-project-binding', 'session-project-select', 'session-create', 'session-binding', 'session-select'] as const;
-export type ControlsCheckpoint = typeof FAILURE_CHECKPOINTS[number] | typeof SESSION_CHECKPOINTS[number];
+const STOP_CHECKPOINTS = ['stop-arm', 'stop-observer-install', 'stop-send', 'stop-running-state', 'stop-native-sample', 'stop-native-evidence', 'stop-native-ownership', 'stop-command', 'stop-preclick-timing', 'stop-click', 'stop-disappearance', 'stop-interrupt-receipt', 'stop-terminal-state', 'stop-execution-items', 'stop-observer-restore'] as const;
+export type ControlsCheckpoint = typeof FAILURE_CHECKPOINTS[number] | typeof SESSION_CHECKPOINTS[number] | typeof STOP_CHECKPOINTS[number];
 export function sanitizeControlsFailure(error: unknown, checkpoint: unknown) {
   let reason: 'ASSERTION' | 'TIMEOUT' | 'OTHER' = 'OTHER';
   let cause: typeof FAILURE_CAUSES[number] | 'none' = 'none';
   try { if (error instanceof Error) { if ((error as NodeJS.ErrnoException).code === 'ERR_ASSERTION') reason = 'ASSERTION'; else if (error.name === 'TimeoutError') reason = 'TIMEOUT';
     const message = error.message; for (const known of FAILURE_CAUSES) if (message === known || message.endsWith('Error: ' + known) || message.includes('Error: ' + known + '\n')) { cause = known; break; }
   } } catch { reason = 'OTHER'; cause = 'none'; }
-  return { reason, checkpoint: [...FAILURE_CHECKPOINTS, ...SESSION_CHECKPOINTS].includes(checkpoint as ControlsCheckpoint) ? checkpoint as ControlsCheckpoint : 'none', cause };
+  return { reason, checkpoint: [...FAILURE_CHECKPOINTS, ...SESSION_CHECKPOINTS, ...STOP_CHECKPOINTS].includes(checkpoint as ControlsCheckpoint) ? checkpoint as ControlsCheckpoint : 'none', cause };
+}
+export const CONTROLS_CHILD_PATH = ['C:/Windows/System32/WindowsPowerShell/v1.0', 'C:/Windows/System32', 'C:/Windows', 'C:/Program Files/nodejs', 'C:/Program Files/Git/mingw64/libexec/git-core'].join(';');
+export function controlsStandardEnvironment(environment: Record<string, string>): Record<string, string> {
+  return { ...Object.fromEntries(Object.entries(environment).filter(([key]) => key.toUpperCase() !== 'PATH')), PATH: CONTROLS_CHILD_PATH };
 }
 export type ControlPhase = typeof CONTROL_PHASES[number] | 'connect' | 'leave-mode' | 'restart-leave' | 'missing-leave';
 export interface ControlsHarness {
@@ -115,8 +120,40 @@ export function assertFreshRefusal(state: AppSnapshot, sessionId: string, reques
 }
 export function assertRefusalComplete(state: AppSnapshot, sessionId: string, requestKey: string) {
   assert.equal(state.approvals.length, 0); const session = state.sessions.find(s => s.id === sessionId); assert.ok(session);
-  assert.equal(session.status, 'completed'); assert.ok(!session.turnId); const item = refusedMcpItem(session, requestKey);
+  assert.equal(session.status, 'completed'); assert.ok(!session.turnId); const item = refusedMcpItem({ ...session, messages: controlsExecutionItems(session) }, requestKey);
   assert.equal(state.tasks.find(t => t.id === session.taskId)!.operations.length, 0); return item;
+}
+export function controlsExecutionItems(session: Session) {
+  const ids = new Set<string>();
+  return session.messages.filter(message => {
+    assert.ok(!ids.has(message.id)); ids.add(message.id);
+    if (message.role !== 'tool') return false;
+    let item: any; try { item = JSON.parse(message.text); } catch { return true; }
+    if (item?.type !== 'reasoning') return true;
+    closed(item, ['type', 'id', 'summary', 'content']); assert.equal(item.id, message.id); assert.equal(typeof item.id, 'string'); assert.match(item.id, /^rs_[a-f0-9]{16,128}$/);
+    assert.equal(message.status, 'completed');
+    for (const parts of [item.summary, item.content]) assert.ok(Array.isArray(parts) && parts.every(part => typeof part === 'string'));
+    return false;
+  });
+}
+export function assertControlsStopItems(session: Session, marker: string) {
+  const items = controlsExecutionItems(session); assert.equal(items.length, 1, 'Exactly one QA shell execution is required');
+  const text = items[0].text; let invocation = text;
+  for (const suffix of [marker + '\r\n', marker + '\n']) if (text.endsWith(suffix)) { invocation = text.slice(0, -suffix.length); break; }
+  assertWaitCommand(invocation, marker); return items[0];
+}
+export function controlsNativeEvidence(sample: { processes: WaitProcess[]; ancestry: WaitProcess[]; sampledAt: string }, proof: WaitOwnershipProof, marker: string, sid: string, sessionId: number) {
+  const number = (value: unknown) => Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : null;
+  const date = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
+  const project = (p: WaitProcess) => {
+    let commandValid = false; try { assertWaitCommand(p.commandLine ?? '', marker); commandValid = true; } catch {}
+    const executable = ['C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe', 'C:/Program Files/PowerShell/7/pwsh.exe', proof.installed,
+      ...['resources/codex/codex.exe', 'resources/codex/codex-command-runner.exe', 'resources/codex/codex-code-mode-host.exe', 'resources/process-host/process-host.exe'].map(relative => path.join(path.dirname(proof.installed), relative))].findIndex(file => typeof p.execPath === 'string' && samePath(file, p.execPath));
+    return { id: number(p.id), parentId: number(p.parentId), created: date(p.created), root: p.root === true, ownerMatches: p.sid === sid && p.sessionId === sessionId && p.ownerQueryStatus === 0,
+      executable: ['system-powershell', 'program-files-pwsh', 'installed-main', 'installed-engine', 'installed-command-runner', 'installed-code-mode-host', 'installed-process-host'][executable] ?? 'unapproved', exactWaitCommand: commandValid };
+  };
+  return { scope: 'controls-native-public-projection-v1', sampledAt: date(sample.sampledAt), processCount: sample.processes.length, ancestryCount: sample.ancestry.length,
+    processes: sample.processes.slice(0, 128).map(project), ancestry: sample.ancestry.slice(0, 32).map(project), commandLinesAndUnapprovedPathsOmitted: true };
 }
 export function assertReleaseDiagnostics(value: any, marker: string, synthetic: string) {
   assert.deepEqual(Object.keys(value).sort(), [...diagnosticsFields].sort());

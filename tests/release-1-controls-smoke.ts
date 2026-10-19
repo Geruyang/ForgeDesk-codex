@@ -19,7 +19,7 @@ import { assertAcceptanceUnchanged, assertMissingGitResult, assertMissingNodeRes
 import { assertControlsStopReceipt, installControlsStopObserver, readControlsStopObserver, restoreControlsStopObserver } from './helpers/controls-stop-observer';
 import { armControlsBoundary, installControlsBoundary, readControlsBoundary } from './helpers/release-1-controls-observer';
 import { CONTROLS_OUTPUT, ControlsGate, assertControlsSnapshot, assertFreshRefusal, assertOwnedWaitProcess, assertRefusalComplete,
-  assertReleaseDiagnostics, assertRestartSessions, assertControlsSessionBinding, selectControlsProject, selectControlsSession, controlsClosure, controlsRuntimeClosure, verifyControlsHarness, sanitizeControlsFailure, assertControlsHostSnapshot, observeControlsModeLeave, type ControlsCheckpoint, type WaitProcess, type ControlPhase } from './helpers/release-1-controls';
+  assertReleaseDiagnostics, assertRestartSessions, assertControlsSessionBinding, selectControlsProject, selectControlsSession, controlsStandardEnvironment, controlsNativeEvidence, assertControlsStopItems, controlsClosure, controlsRuntimeClosure, verifyControlsHarness, sanitizeControlsFailure, assertControlsHostSnapshot, observeControlsModeLeave, type ControlsCheckpoint, type WaitProcess, type ControlPhase } from './helpers/release-1-controls';
 
 const installed = path.join(ROOT, 'install/ForgeDesk.exe'), dataDir = path.join(ROOT, '.runtime/app');
 const execute = promisify(execFile), ps = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
@@ -108,9 +108,9 @@ async function run(args: string[]) {
     assertHistorical(state, admission.host, undefined, id => { checkpoint = id; }); checkpoint = 'no-work'; assertNoWork(state);
     if (state.hardware.modeActive) assert.equal(state.engine.state, 'stopped'); controlled = state.hardware.modeActive === true; return state; }
   function own(state: AppSnapshot, id: string) { const session = state.sessions.find(s => s.id === id); assert.ok(session); return session; }
-  async function waitFor(test: (state: AppSnapshot) => boolean, timeout = 120000) {
+  async function waitFor(test: (state: AppSnapshot) => boolean, timeout = 120000, observation?: ControlsCheckpoint) {
     const until = Date.now() + timeout;
-    while (Date.now() < until) { const state = await snapshot(); if (test(state)) return state; await pause(250); }
+    while (Date.now() < until) { const state = await snapshot(); if (observation) checkpoint = observation; if (test(state)) return state; await pause(250); }
     throw new Error('Control observation timed out; action was not retried');
   }
   async function launch(missing = false) {
@@ -119,7 +119,7 @@ async function run(args: string[]) {
     checkpoint = 'launch-lifecycle-before'; await lifecycle.beforeLaunch(); live();
     checkpoint = 'launch-playwright-import'; const { _electron: electron } = await import('playwright');
     checkpoint = 'launch-application'; app = await electron.launch({ executablePath: installed, args: [], cwd: missing ? emptyPath : ROOT, timeout: 30000,
-      env: missing ? missingToolsAppEnvironment(launchEnvironment(process.env, dataDir), emptyPath, dataDir) : launchEnvironment(process.env, dataDir) });
+      env: missing ? missingToolsAppEnvironment(launchEnvironment(process.env, dataDir), emptyPath, dataDir) : controlsStandardEnvironment(launchEnvironment(process.env, dataDir)) });
     checkpoint = 'launch-native-attach'; const launch = await lifecycle.attach(app); if (failed) { lifecycle.protectOnFailure(); live(); }
     checkpoint = 'launch-first-window'; page = await app.firstWindow(); page.on('pageerror', () => errors.push('CONTROLS_RENDERER_PAGE_ERROR'));
     checkpoint = 'launch-header'; await page.locator('.app-header').waitFor({ state: 'visible', timeout: 30000 });
@@ -157,30 +157,35 @@ async function run(args: string[]) {
     if (phase === 'stop') {
       assertNoWork(await snapshot()); const stopped = await newSession(`QA stop ${plan.id}`); stopId = stopped.id; currentTask = stopped.taskId;
       const prompt = `This is a harmless stop test. Use the built-in shell exactly ONCE to execute exactly: Write-Output '${marker}'; Start-Sleep -Seconds 45. Do not read or change any files, do not read product/authentication directories, do not request extra permissions, and do not retry after interruption. Begin this command now.`;
-      await effect(() => app!.evaluate(armControlsBoundary, [{ method: 'send', args: [stopId, prompt, 'gpt-6.1-sol'] }, { method: 'interrupt', args: [stopId] }]));
-      await effect(() => app!.evaluate(installControlsStopObserver, { sessionId: stopId! })); observerSession = stopId;
-      await effect(() => page!.evaluate(({ id, prompt }) => window.forgeDesk.send(id, prompt, 'gpt-6.1-sol'), { id: stopId!, prompt }));
-      const running = await waitFor(s => s.approvals.length > 0 || own(s, stopId!).messages.some(m => m.role === 'tool' && m.text.includes(marker) && ['running', 'inProgress'].includes(m.status ?? '')) || ['completed', 'failed', 'interrupted', 'needs_attention'].includes(own(s, stopId!).status), 90000);
-      assert.equal(running.approvals.length, 0); assert.equal(own(running, stopId).status, 'running');
+      checkpoint = 'stop-arm'; await effect(() => app!.evaluate(armControlsBoundary, [{ method: 'send', args: [stopId, prompt, 'gpt-6.1-sol'] }, { method: 'interrupt', args: [stopId] }]));
+      checkpoint = 'stop-observer-install'; await effect(() => app!.evaluate(installControlsStopObserver, { sessionId: stopId! })); observerSession = stopId;
+      checkpoint = 'stop-send'; await effect(() => page!.evaluate(({ id, prompt }) => window.forgeDesk.send(id, prompt, 'gpt-6.1-sol'), { id: stopId!, prompt }));
+      const running = await waitFor(s => s.approvals.length > 0 || own(s, stopId!).messages.some(m => m.role === 'tool' && m.text.includes(marker) && ['running', 'inProgress'].includes(m.status ?? '')) || ['completed', 'failed', 'interrupted', 'needs_attention'].includes(own(s, stopId!).status), 90000, 'stop-running-state');
+      checkpoint = 'stop-running-state'; assert.equal(running.approvals.length, 0); assert.equal(own(running, stopId).status, 'running');
       const currentMain = lifecycle!.evidence.launches.at(-1)!.nativeMain!;
+      checkpoint = 'stop-native-sample';
       const sample = await effect(() => nativeWaitSample(marker, undefined, currentMain.id)), before = sample.processes, identity = lifecycle!.evidence.initialDesktopIdentity!;
       const proof = { main: currentMain, ancestry: sample.ancestry, installed, sampledAt: sample.sampledAt };
-      const native = assertOwnedWaitProcess(before, marker, identity.sid, identity.sessionId, proof); assertWaitCommand(native.commandLine!, marker);
+      checkpoint = 'stop-native-evidence'; await effect(() => writeNew(path.join(output, 'stop-native-sample.json'), controlsNativeEvidence(sample, proof, marker, identity.sid, identity.sessionId)));
+      checkpoint = 'stop-native-ownership'; const native = assertOwnedWaitProcess(before, marker, identity.sid, identity.sessionId, proof);
+      checkpoint = 'stop-command'; assertWaitCommand(native.commandLine!, marker);
+      checkpoint = 'stop-preclick-timing';
       assert.ok(Date.now() - Date.parse(native.created) < 30000); const clickedAt = new Date().toISOString(), deadline = stopObservationDeadline(native.created);
       assertStopObservationTiming(native.created, clickedAt, clickedAt);
-      await effect(() => page!.getByRole('button', { name: '停止当前回合', exact: true }).click({ timeout: Math.max(1, deadline - Date.now()) }));
+      checkpoint = 'stop-click'; await effect(() => page!.getByRole('button', { name: '停止当前回合', exact: true }).click({ timeout: Math.max(1, deadline - Date.now()) }));
       let observedAt: string;
+      checkpoint = 'stop-disappearance';
       while (true) {
         const survivors = await effect(() => nativeWaits(marker, before)), after = await effect(() => nativeWaits(marker)); observedAt = new Date().toISOString(); assertStopObservationTiming(native.created, clickedAt, observedAt);
         if (!survivors.length && !after.length) break; await pause(100);
       }
-      let receipt = await app!.evaluate(readControlsStopObserver, { sessionId: stopId }); const until = Date.now() + 60000;
+      checkpoint = 'stop-interrupt-receipt'; let receipt = await app!.evaluate(readControlsStopObserver, { sessionId: stopId }); const until = Date.now() + 60000;
       while (receipt.calls.some(c => c.phase === 'started') && Date.now() < until) { await pause(100); receipt = await app!.evaluate(readControlsStopObserver, { sessionId: stopId }); }
-      assertControlsStopReceipt(receipt); await waitFor(s => own(s, stopId!).status === 'interrupted' && !own(s, stopId!).turnId && s.engine.state === 'ready', 60000);
-      const finalStop = own(await snapshot(), stopId), toolItems = finalStop.messages.filter(m => m.role === 'tool');
-      assert.equal(toolItems.length, 1, 'Only the one harmless QA waiting tool item is accepted'); assert.ok(toolItems[0].text.includes(marker));
+      assertControlsStopReceipt(receipt); checkpoint = 'stop-terminal-state'; await waitFor(s => own(s, stopId!).status === 'interrupted' && !own(s, stopId!).turnId && s.engine.state === 'ready', 60000, 'stop-terminal-state');
+      const finalStop = own(await snapshot(), stopId); checkpoint = 'stop-execution-items'; assertControlsStopItems(finalStop, marker);
+      checkpoint = 'stop-observer-restore';
       const restoration = await effect(() => app!.evaluate(restoreControlsStopObserver, { sessionId: stopId! })); observerSession = undefined; currentTask = undefined;
-      return { prompt, before, ownershipProof: proof, clickedAt, nativeAbsenceObservedAt: observedAt, receipt, restoration, toolItemCount: toolItems.length, manuallyKilled: false };
+      return { prompt, before, ownershipProof: proof, clickedAt, nativeAbsenceObservedAt: observedAt, receipt, restoration, executionToolItemCount: 1, manuallyKilled: false };
     }
     if (phase === 'mcp-request') {
       assertNoWork(await snapshot()); const refused = await newSession(`QA refusal ${plan.id}`); refusalId = refused.id; currentTask = refused.taskId;

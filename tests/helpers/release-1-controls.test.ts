@@ -8,13 +8,92 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import type { AppSnapshot, Approval, Session } from '../../packages/shared/contracts';
 import { CONTROL_PHASES, CONTROLS_ENTRIES, ControlsGate, assertControlsHarness, assertFreshRefusal, assertOwnedWaitProcess,
-  assertRefusalComplete, assertReleaseDiagnostics, assertRestartSessions, assertControlsSessionBinding, selectControlsProject, selectControlsSession, sanitizeControlsFailure, controlsClosure, type WaitProcess } from './release-1-controls';
+  assertRefusalComplete, assertReleaseDiagnostics, assertRestartSessions, assertControlsSessionBinding, selectControlsProject, selectControlsSession, sanitizeControlsFailure, controlsStandardEnvironment, CONTROLS_CHILD_PATH, controlsExecutionItems, assertControlsStopItems, controlsNativeEvidence, controlsClosure, type WaitProcess } from './release-1-controls';
 import { assertStopObservationTiming, assertWaitCommand } from './second-user-controls';
 import { assertControlsStopReceipt } from './controls-stop-observer';
 import { assertAcceptanceUnchanged, assertMissingGitResult, assertMissingNodeResult, missingToolsAppEnvironment } from './second-user-missing-tools';
 import { armControlsBoundary, installControlsBoundary, readControlsBoundary } from './release-1-controls-observer';
 
-const pin = 'a'.repeat(64), nextPin = 'b'.repeat(64), requestKey = 'qa-request';
+const pin = 'a'.repeat(64), nextPin = 'b'.repeat(64), requestKey = 'qa-request', reasoningId = 'rs_' + 'a'.repeat(48);
+test('standard controls PATH is fixed child-only and never inherits cached PowerShell or alters missing-tools PATH', () => {
+  const parent = { PATH: 'C:/unapproved/pwsh;C:/Users/qa/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell', Path: 'mixed', SYSTEMROOT: 'C:/Windows' };
+  const child = controlsStandardEnvironment(parent);
+  assert.deepEqual(child, { SYSTEMROOT: 'C:/Windows', PATH: 'C:/Windows/System32/WindowsPowerShell/v1.0;C:/Windows/System32;C:/Windows;C:/Program Files/nodejs;C:/Program Files/Git/mingw64/libexec/git-core' });
+  assert.equal(child.PATH, CONTROLS_CHILD_PATH); assert.equal(parent.Path, 'mixed'); assert.ok(parent.PATH.includes('.cache'));
+  assert.equal(missingToolsAppEnvironment(child, 'E:/empty', 'E:/data').PATH, 'E:/empty');
+});
+test('only completed ID-bound reasoning with the actual adapter string-array schema is nonexecuting', () => {
+  const reasoning = { id: reasoningId, role: 'tool', status: 'completed', text: JSON.stringify({ type: 'reasoning', id: reasoningId, summary: ['summary'], content: [] }) };
+  const session = { messages: [reasoning] } as Session;
+  assert.deepEqual(controlsExecutionItems(session), []);
+  for (const item of [{ type: 'reasoning', id: 'wrong', summary: [], content: [] }, { type: 'reasoning', id: reasoningId, summary: [], content: [], command: 'hidden' }, { type: 'reasoning', id: reasoningId, summary: [{ type: 'commandExecution' }], content: [] }, { type: 'reasoning', id: reasoningId, summary: [], content: 'text' }]) assert.throws(() => controlsExecutionItems({ ...session, messages: [{ ...reasoning, text: JSON.stringify(item) }] } as Session));
+  assert.throws(() => controlsExecutionItems({ messages: [{ ...reasoning, id: 'exec-123', text: JSON.stringify({ type: 'reasoning', id: 'exec-123', summary: [], content: [] }) }] } as Session));
+  assert.throws(() => controlsExecutionItems({ ...session, messages: [{ ...reasoning, status: 'running' }] } as Session));
+  assert.throws(() => controlsExecutionItems({ ...session, messages: [reasoning, reasoning] } as Session));
+});
+test('Stop preserves exactly one harmless shell execution while rejecting unknown or duplicate execution items', () => {
+  const marker = 'qa-controls-wait-snapshot-1792440121109';
+  const shell = { id: 'shell', role: 'tool', status: 'completed', text: `"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Write-Output '${marker}'; Start-Sleep -Seconds 45"${marker}\r\n` };
+  const reasoning = { id: reasoningId, role: 'tool', status: 'completed', text: JSON.stringify({ type: 'reasoning', id: reasoningId, summary: [], content: [] }) };
+  const session = { messages: [shell, reasoning] } as Session;
+  assert.equal(assertControlsStopItems(session, marker).id, 'shell');
+  for (const messages of [[shell, { ...shell, id: 'second' }, reasoning], [reasoning], [{ ...shell, text: JSON.stringify({ type: 'webSearch', marker }) }, reasoning], [{ ...shell, text: shell.text.replace('Start-Sleep', 'Get-Content secret; Start-Sleep') }, reasoning]]) assert.throws(() => assertControlsStopItems({ messages } as Session, marker));
+});
+test('MCP refusal ignores only proven reasoning and retains every exact protocol refusal check', () => {
+  const { state, session } = fixture(); state.approvals = []; session.status = 'completed'; delete session.turnId;
+  const item = { type: 'mcpToolCall', server: 'engineering', tool: 'engineering.test', arguments: { taskId: 'task', verifierId: 'qa-controls-verifier', requestKey }, status: 'failed', error: { message: 'user rejected MCP tool call' }, result: null };
+  const tool = { id: 'tool', role: 'tool', text: JSON.stringify(item), status: 'completed' };
+  session.messages = [tool, { id: reasoningId, role: 'tool', status: 'completed', text: JSON.stringify({ type: 'reasoning', id: reasoningId, summary: [], content: [] }) }] as any;
+  assert.deepEqual(assertRefusalComplete(state, session.id, requestKey), item);
+  session.messages.push({ ...tool, id: 'retry' } as any); assert.throws(() => assertRefusalComplete(state, session.id, requestKey)); session.messages.pop();
+  session.messages[0].text = JSON.stringify({ ...item, error: { message: 'cancelled' } }); assert.throws(() => assertRefusalComplete(state, session.id, requestKey));
+  session.messages[0].text = JSON.stringify({ type: 'unknown', requestKey }); assert.throws(() => assertRefusalComplete(state, session.id, requestKey));
+});
+test('pre-validation native evidence is bounded and never exposes command lines unapproved paths or SID payloads', () => {
+  const process = { id: 9, parentId: 8, created: '2026-10-20T00:00:00Z', root: true, sid: 'PRIVATE_SID', sessionId: 2, ownerQueryStatus: 0, execPath: 'C:/PRIVATE_PATH/pwsh.exe', commandLine: 'PRIVATE_COMMAND' } as WaitProcess;
+  const installed = path.resolve('E:/qa/ForgeDesk.exe');
+  const evidence = controlsNativeEvidence({ processes: Array(130).fill(process), ancestry: [process], sampledAt: '2026-10-20T00:00:01Z' }, { installed, main: process, ancestry: [process], sampledAt: '2026-10-20T00:00:01Z' }, 'qa-controls-wait-snapshot-123', 'PRIVATE_SID', 2);
+  assert.equal(evidence.processCount, 130); assert.equal(evidence.processes.length, 128); assert.equal(evidence.processes[0].executable, 'unapproved'); assert.equal(evidence.processes[0].exactWaitCommand, false); assert.equal(evidence.processes[0].ownerMatches, true);
+  assert.equal(JSON.stringify(evidence).includes('PRIVATE'), false);
+});
+test('Stop diagnostics distinguish each fixed native and UI stage without disclosing arbitrary causes', async () => {
+  const stages = ['stop-arm', 'stop-observer-install', 'stop-send', 'stop-running-state', 'stop-native-sample', 'stop-native-evidence', 'stop-native-ownership', 'stop-command', 'stop-preclick-timing', 'stop-click', 'stop-disappearance', 'stop-interrupt-receipt', 'stop-terminal-state', 'stop-execution-items', 'stop-observer-restore'];
+  for (const stage of stages) assert.deepEqual(sanitizeControlsFailure(Object.assign(Error('PRIVATE'), { code: 'ERR_ASSERTION' }), stage), { reason: 'ASSERTION', checkpoint: stage, cause: 'none' });
+  const source = await readFile(new URL('../release-1-controls-smoke.ts', import.meta.url), 'utf8');
+  assert.ok(source.indexOf("'stop-native-sample.json'") < source.indexOf('const native = assertOwnedWaitProcess'));
+  assert.ok(source.indexOf("checkpoint = 'stop-command'") < source.indexOf("checkpoint = 'stop-click'"));
+  assert.match(source, /if \(observation\) checkpoint = observation/);
+});
+test('real adapter projection preserves command prefixes and MCP types so execution output cannot masquerade as reasoning', async () => {
+  const ts = (await import('typescript')).default;
+  const source = await readFile(new URL('../../apps/desktop/main/index.ts', import.meta.url), 'utf8');
+  const parsed = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
+  const node = parsed.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'onEngineEvent'); assert.ok(node);
+  const session = { threadId: 'fixture-thread', messages: [] } as unknown as Session;
+  const compiled = ts.transpileModule(node.getText(parsed), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  const onEvent = vm.runInNewContext(compiled + ';onEngineEvent', { store: { sessions: [session], appendEvent() {} }, sanitize: (v: unknown) => v, asRecord: (v: unknown) => v, save() {}, publish() {} });
+  const event = (method: string, item: any, more: any = {}) => onEvent({ generation: 1, sequence: 1, method, params: { threadId: session.threadId, item, ...more } });
+  const command = { id: 'exec-fixture', type: 'commandExecution', command: 'powershell.exe -Command "Write-Output harmless"', status: 'inProgress' };
+  const reason = { id: reasoningId, type: 'reasoning', summary: [], content: [] };
+  event('item/started', command); event('item/commandExecution/outputDelta', undefined, { itemId: command.id, delta: JSON.stringify({ ...reason, id: command.id }) }); event('item/completed', { ...command, status: 'completed' });
+  event('item/completed', reason); event('item/completed', { id: 'mcp-fixture', type: 'mcpToolCall', status: 'failed' });
+  assert.ok(session.messages[0].text.startsWith(command.command)); assert.equal(JSON.parse(session.messages[1].text).type, 'reasoning'); assert.equal(JSON.parse(session.messages[2].text).type, 'mcpToolCall');
+  assert.deepEqual(controlsExecutionItems(session).map(item => item.id), ['exec-fixture', 'mcp-fixture']);
+});
+test('real Stop wait loop reports its waiting stage but preserves a failing snapshot no-work checkpoint', async () => {
+  const ts = (await import('typescript')).default;
+  const source = await readFile(new URL('../release-1-controls-smoke.ts', import.meta.url), 'utf8');
+  const parsed = ts.createSourceFile('controls.ts', source, ts.ScriptTarget.Latest, true); let found: import('typescript').FunctionDeclaration | undefined;
+  const visit = (node: import('typescript').Node) => { if (ts.isFunctionDeclaration(node) && node.name?.text === 'waitFor') found = node; ts.forEachChild(node, visit); }; visit(parsed); assert.ok(found);
+  const compiled = ts.transpileModule(found.getText(parsed), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  for (const failSnapshot of [false, true]) {
+    let now = 0; const context: any = { checkpoint: 'none', Date: { now: () => now }, pause: async () => { now += 10; } };
+    context.snapshot = async () => { context.checkpoint = 'no-work'; if (failSnapshot) throw Object.assign(Error('private snapshot'), { code: 'ERR_ASSERTION' }); return {}; };
+    const wait = vm.runInNewContext(compiled + ';waitFor', context);
+    await assert.rejects(wait(() => false, 1, 'stop-running-state'));
+    assert.equal(context.checkpoint, failSnapshot ? 'no-work' : 'stop-running-state');
+  }
+});
 test('QA session selection requires the unique fixed project and exact persisted session binding', () => {
   const session = { id: 'qa-session', projectId: 'qa-project', title: 'QA [exact]+(title)' } as Session;
   const state = { projects: [{ id: 'old-project', root: 'E:/old' }, { id: 'qa-project', root: 'E:/qa' }], sessions: [session] } as AppSnapshot;
@@ -206,6 +285,7 @@ test('Stop accepts only one owned QA shell root and exact harmless waiting comma
   assert.throws(() => assertOwnedWaitProcess([{ ...process, sid: 'other' }], marker, 'primary', 1, proof));
   assert.throws(() => assertOwnedWaitProcess([{ ...process, sessionId: 2 }], marker, 'primary', 1, proof));
   assert.throws(() => assertOwnedWaitProcess([{ ...process, ownerQueryStatus: 2 }], marker, 'primary', 1, proof));
+  assert.throws(() => assertOwnedWaitProcess([{ ...process, name: 'pwsh.exe', execPath: 'C:/Users/qa/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' }], marker, 'primary', 1, proof));
   assert.throws(() => assertOwnedWaitProcess([{ ...process, parentId: 987654 }], marker, 'primary', 1, proof));
   assert.throws(() => assertOwnedWaitProcess([process], marker, 'primary', 1, { ...proof, ancestry: [host, main] }));
   assert.throws(() => assertOwnedWaitProcess([process], marker, 'primary', 1, { ...proof, ancestry: [{ ...engine, created: '2026-10-19T00:00:06.000Z' }, host, main] }));
