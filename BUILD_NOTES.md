@@ -4,7 +4,9 @@ Windows 首次 clone 请显式禁用工作区换行转换：`git -c core.autocrl
 
 原 package scripts、生产构建逻辑和安全 pin 不变。npm ci 仅安装声明的 npm 依赖，不提供官方 engine 可执行文件、硬件工具/模型资源、Windows helper 与固定编译器配对、板端部署包。未声称干净 checkout 可直接完成打包或全部硬件功能；不得用空 manifest、重 pin 或虚构资格绕过门禁。
 
-建议先 npm run typecheck，再按发布方最终验证记录运行软件/mock 测试。npm test 使用 scripts/run-tests.mjs 的源码测试发现规则；测试生成的 output 目录不是历史证据输入。Windows 默认测试还含 snapshot.test.ts、restricted-*、sandbox-long-path、snapshot-native-boundaries、snapshot-policy-native-config、snapshot-runner-integration 等真实本机 sandbox 测试，需匹配版本的 vendor/codex/codex.exe、vendor/process-host/process-host.exe 及指定 Windows 工具；ssh-environment.test.ts 还需本机 OpenSSH。没有这些单独配置的前置，不能承诺干净 checkout 的默认 npm test 全过。部分 process-host 测试在缺 binary 时跳过，不等于验证通过。npm run build 和 npm run package 保持原有资源和编译器要求。不得因验收脚本源码存在就执行真实模型、已安装账户、设备、时钟、部署或恢复操作。
+建议先 npm run typecheck，再按发布方最终验证记录运行软件/mock 测试。npm test 使用 scripts/run-tests.mjs 的源码测试发现规则；测试同时使用自行生成的临时输出和部分预先存在的历史证据输入，两者不可互换。Windows 默认测试还含 snapshot.test.ts、restricted-*、sandbox-long-path、snapshot-native-boundaries、snapshot-policy-native-config、snapshot-runner-integration 等真实本机 sandbox 测试，需匹配版本的 vendor/codex/codex.exe、vendor/process-host/process-host.exe 及指定 Windows 工具；ssh-environment.test.ts 还需本机 OpenSSH。没有这些单独配置的前置，不能承诺干净 checkout 的默认 npm test 全过。部分 process-host 测试在缺 binary 时跳过，不等于验证通过。npm run build 和 npm run package 保持原有资源和编译器要求。不得因验收脚本源码存在就执行真实模型、已安装账户、设备、时钟、部署或恢复操作。
+
+默认 npm test 还自动纳入 reconciliation.test.ts、fz3b-host-finalization-observation.test.ts、release-1-software.test.ts 和 release-package-audit.test.mjs 中的历史证据或授权回归。这些测试需要原本机保存的 inspect、host-finalization、reviewed reconciliation 与资产授权记录；相应 output/、.runtime/ 输入不随源码发布，不得复制私人运行证据或伪造记录补齐门禁。本源码快照在干净 CI 环境已验证的范围是类型检查与显式列出的 63 项检查，不是默认 123 个测试文件的完整 npm test。
 
 vendor/codex/manifest.json 原本含本机二进制来源信息，明确不分发；vendor/codex/LICENSE 保留。需在另行准备并核验匹配版本的官方 engine 二进制后，按原 scripts/vendor-codex.ps1 在本机生成 manifest；本发布工具不下载、不执行二进制。其余公共固定资源 manifest 与 server-key known_hosts pin 按原字节保留，public server key 不是账户私钥。
 

@@ -11,17 +11,23 @@ import type { InstalledMainProcess } from './second-user-controls';
 
 export const CONTROLS_OUTPUT = 'output/release-1.0/controls';
 export const CONTROLS_BOOTSTRAP = 'tests/helpers/release-1-controls-bootstrap.mjs';
+export const CONTROLS_DIAGNOSTICS_ARTIFACT = 'diagnostics-export.json';
+export async function assertControlsDiagnosticsTargetAbsent(output: string) {
+  const filename = path.join(output, CONTROLS_DIAGNOSTICS_ARTIFACT);
+  try { await lstat(filename); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return filename; throw error; }
+  throw Object.assign(Error('CONTROLS_EXPORT_EXISTS'), { code: 'EEXIST' });
+}
 export const CONTROLS_ENTRIES = ['tests/release-1-controls-smoke.ts', 'tests/helpers/release-1-controls.ts', 'tests/helpers/release-1-controls.test.ts', CONTROLS_BOOTSTRAP];
 export const CONTROL_PHASES = ['launch', 'ready', 'stop', 'mcp-request', 'reload', 'refuse', 'diagnostics', 'close-a', 'restart', 'restart-verify', 'close-b', 'missing-launch', 'missing-tools', 'missing-close'] as const;
 const FAILURE_CHECKPOINTS = ['none', 'snapshot-contract', 'host-snapshot-contract', 'no-work', 'history-primary-identity', 'history-primary-immutable', 'history-primary-owner', 'history-primary-release', 'history-extra-inspect', 'history-hardware', 'gate-arm', 'phase-verify', 'launch-persisted-quiet', 'launch-lifecycle-prepare', 'launch-lifecycle-before', 'launch-playwright-import', 'launch-application', 'launch-native-attach', 'launch-first-window', 'launch-header', 'launch-viewport', 'launch-boundary-install', 'launch-child-path', 'launch-host-observation', 'mode-leave-preflight', 'mode-leave-ipc', 'mode-leave-receipt', 'mode-leave-postflight'] as const;
 const FAILURE_CAUSES = ['CONTROLS_ELECTRON_MISMATCH', 'CONTROLS_BOUNDARY_UNAVAILABLE', 'CONTROLS_BOUNDARY_NOT_QUIET', 'CONTROLS_BOUNDARY_BAD_ARM', 'CONTROLS_BOUNDARY_CHANGED', 'CONTROLS_IPC_NOT_ARMED', 'CONTROLS_PROJECT_ROOT_MISMATCH', 'CONTROLS_HELD_NO_NEXT_ACTION', 'CONTROLS_PHASE_HELD'] as const;
-const SESSION_CHECKPOINTS = ['session-project-binding', 'session-project-select', 'session-create', 'session-binding', 'session-select'] as const;
+const SESSION_CHECKPOINTS = ['session-project-binding', 'session-project-select', 'session-create', 'session-binding', 'session-select', 'diagnostics-export', 'diagnostics-verify', 'phase-record-write'] as const;
 const STOP_CHECKPOINTS = ['stop-arm', 'stop-observer-install', 'stop-send', 'stop-running-state', 'stop-native-sample', 'stop-native-evidence', 'stop-native-ownership', 'stop-command', 'stop-preclick-timing', 'stop-click', 'stop-disappearance', 'stop-interrupt-receipt', 'stop-terminal-state', 'stop-execution-items', 'stop-observer-restore'] as const;
 export type ControlsCheckpoint = typeof FAILURE_CHECKPOINTS[number] | typeof SESSION_CHECKPOINTS[number] | typeof STOP_CHECKPOINTS[number];
 export function sanitizeControlsFailure(error: unknown, checkpoint: unknown) {
-  let reason: 'ASSERTION' | 'TIMEOUT' | 'OTHER' = 'OTHER';
+  let reason: 'ASSERTION' | 'TIMEOUT' | 'FILE_EXISTS' | 'OTHER' = 'OTHER';
   let cause: typeof FAILURE_CAUSES[number] | 'none' = 'none';
-  try { if (error instanceof Error) { if ((error as NodeJS.ErrnoException).code === 'ERR_ASSERTION') reason = 'ASSERTION'; else if (error.name === 'TimeoutError') reason = 'TIMEOUT';
+  try { if (error instanceof Error) { if ((error as NodeJS.ErrnoException).code === 'ERR_ASSERTION') reason = 'ASSERTION'; else if ((error as NodeJS.ErrnoException).code === 'EEXIST') reason = 'FILE_EXISTS'; else if (error.name === 'TimeoutError') reason = 'TIMEOUT';
     const message = error.message; for (const known of FAILURE_CAUSES) if (message === known || message.endsWith('Error: ' + known) || message.includes('Error: ' + known + '\n')) { cause = known; break; }
   } } catch { reason = 'OTHER'; cause = 'none'; }
   return { reason, checkpoint: [...FAILURE_CHECKPOINTS, ...SESSION_CHECKPOINTS, ...STOP_CHECKPOINTS].includes(checkpoint as ControlsCheckpoint) ? checkpoint as ControlsCheckpoint : 'none', cause };

@@ -18,7 +18,7 @@ import { assertStopObservationTiming, assertWaitCommand, stopObservationDeadline
 import { assertAcceptanceUnchanged, assertMissingGitResult, assertMissingNodeResult, missingToolsAppEnvironment } from './helpers/second-user-missing-tools';
 import { assertControlsStopReceipt, installControlsStopObserver, readControlsStopObserver, restoreControlsStopObserver } from './helpers/controls-stop-observer';
 import { armControlsBoundary, installControlsBoundary, readControlsBoundary } from './helpers/release-1-controls-observer';
-import { CONTROLS_OUTPUT, ControlsGate, assertControlsSnapshot, assertFreshRefusal, assertOwnedWaitProcess, assertRefusalComplete,
+import { CONTROLS_OUTPUT, CONTROLS_DIAGNOSTICS_ARTIFACT, assertControlsDiagnosticsTargetAbsent, ControlsGate, assertControlsSnapshot, assertFreshRefusal, assertOwnedWaitProcess, assertRefusalComplete,
   assertReleaseDiagnostics, assertRestartSessions, assertControlsSessionBinding, selectControlsProject, selectControlsSession, controlsStandardEnvironment, controlsNativeEvidence, assertControlsStopItems, controlsClosure, controlsRuntimeClosure, verifyControlsHarness, sanitizeControlsFailure, assertControlsHostSnapshot, observeControlsModeLeave, type ControlsCheckpoint, type WaitProcess, type ControlPhase } from './helpers/release-1-controls';
 
 const installed = path.join(ROOT, 'install/ForgeDesk.exe'), dataDir = path.join(ROOT, '.runtime/app');
@@ -215,10 +215,11 @@ async function run(args: string[]) {
       await assert.rejects(invoke('importProject', [], { expectedRejection: true })); live();
       await app!.evaluate(({ dialog }) => { const original = dialog.showSaveDialog; dialog.showSaveDialog = async () => { dialog.showSaveDialog = original; return { canceled: true, filePath: '' }; }; });
       assert.equal(await invoke('exportDiagnostics', []), null);
-      const filename = path.join(output, 'diagnostics.json'); await plainPath(filename);
+      checkpoint = 'diagnostics-export'; const filename = path.join(output, CONTROLS_DIAGNOSTICS_ARTIFACT); await plainPath(filename);
+      assert.equal(await effect(() => assertControlsDiagnosticsTargetAbsent(output)), filename);
       await app!.evaluate(({ dialog }, filename) => { const original = dialog.showSaveDialog; dialog.showSaveDialog = async () => { dialog.showSaveDialog = original; return { canceled: false, filePath: filename }; }; }, filename);
       assert.equal(await invoke('exportDiagnostics', []), filename);
-      const bytes = await readStable(filename); const value = JSON.parse(bytes.toString()); assertReleaseDiagnostics(value, logMarker, synthetic);
+      checkpoint = 'diagnostics-verify'; const bytes = await readStable(filename); const value = JSON.parse(bytes.toString()); assertReleaseDiagnostics(value, logMarker, synthetic);
       return { diagnosticSha256: sha(bytes), exactSyntheticLogRedacted: true, cancelledReturnedNull: true, authenticationRead: false };
     }
     if (phase === 'close-a') { const before = await snapshot(); assertNoWork(before); expected = owned.map(id => own(before, id)); return { close: await close(), savedSessions: expected.map(s => s.id) }; }
@@ -270,7 +271,7 @@ async function run(args: string[]) {
       await effect(() => writeNew(path.join(output, `${phase}.pending.json`), { schemaVersion: 1, scope: 'release-1-controls-pending-v1', id: plan.id, planSha256: planSha, candidateSha256: plan.candidateSha256, phase, predecessorSha256: prior, startedAt }));
       const facts = await phaseAction(phase); live(); assert.deepEqual(errors, []); const ipc = app ? await boundary() : null;
       await effect(() => verifyPlan(plan));
-      const pin = await effect(() => writeNew(path.join(output, `${phase}.json`), { schemaVersion: 1, scope: 'release-1-controls-phase-v1', version: '1.0.0', id: plan.id,
+      checkpoint = 'phase-record-write'; const pin = await effect(() => writeNew(path.join(output, `${phase}.json`), { schemaVersion: 1, scope: 'release-1-controls-phase-v1', version: '1.0.0', id: plan.id,
         planSha256: planSha, candidateSha256: plan.candidateSha256, phase, predecessorSha256: prior, result: 'passed', startedAt, finishedAt: new Date().toISOString(), facts, ipc, noAutomaticNextPhase: true }));
       gate.complete(phase, pin); console.log(JSON.stringify({ phase, recordSha256: pin, next: gate.expected(controlled) ?? null, controlledModeActive: controlled, completed: gate.done, noAutomaticNextPhase: true }));
       if (gate.done) { input.close(); finished(); }

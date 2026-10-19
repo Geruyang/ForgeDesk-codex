@@ -7,14 +7,92 @@ import vm from 'node:vm';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import type { AppSnapshot, Approval, Session } from '../../packages/shared/contracts';
-import { CONTROL_PHASES, CONTROLS_ENTRIES, ControlsGate, assertControlsHarness, assertFreshRefusal, assertOwnedWaitProcess,
+import { CONTROL_PHASES, CONTROLS_ENTRIES, CONTROLS_DIAGNOSTICS_ARTIFACT, assertControlsDiagnosticsTargetAbsent, ControlsGate, assertControlsHarness, assertFreshRefusal, assertOwnedWaitProcess,
   assertRefusalComplete, assertReleaseDiagnostics, assertRestartSessions, assertControlsSessionBinding, selectControlsProject, selectControlsSession, sanitizeControlsFailure, controlsStandardEnvironment, CONTROLS_CHILD_PATH, controlsExecutionItems, assertControlsStopItems, controlsNativeEvidence, controlsClosure, type WaitProcess } from './release-1-controls';
 import { assertStopObservationTiming, assertWaitCommand } from './second-user-controls';
 import { assertControlsStopReceipt } from './controls-stop-observer';
 import { assertAcceptanceUnchanged, assertMissingGitResult, assertMissingNodeResult, missingToolsAppEnvironment } from './second-user-missing-tools';
 import { armControlsBoundary, installControlsBoundary, readControlsBoundary } from './release-1-controls-observer';
+import { writeNew, readStable, sha } from './release-1-files';
 
 const pin = 'a'.repeat(64), nextPin = 'b'.repeat(64), requestKey = 'qa-request', reasoningId = 'rs_' + 'a'.repeat(48);
+test('every literal run artifact and diagnostics export is disjoint from all reserved phase records', async () => {
+  const ts = (await import('typescript')).default;
+  const source = await readFile(new URL('../release-1-controls-smoke.ts', import.meta.url), 'utf8');
+  const parsed = ts.createSourceFile('controls.ts', source, ts.ScriptTarget.Latest, true), names: string[] = [];
+  const reserved = new Set(['plan.json', 'held.json', ...[...CONTROL_PHASES, 'connect', 'leave-mode', 'restart-leave', 'missing-leave'].flatMap(phase => [`${phase}.json`, `${phase}.pending.json`])]);
+  const visit = (node: import('typescript').Node) => {
+    if (ts.isCallExpression(node) && node.expression.getText(parsed) === 'path.join' && node.arguments[0]?.getText(parsed) === 'output' && node.arguments.length === 2) {
+      const leaf = node.arguments[1];
+      if (ts.isStringLiteral(leaf) && !['plan.json', 'held.json'].includes(leaf.text)) names.push(leaf.text);
+      if (ts.isIdentifier(leaf) && leaf.text === 'CONTROLS_DIAGNOSTICS_ARTIFACT') names.push(CONTROLS_DIAGNOSTICS_ARTIFACT);
+    }
+    ts.forEachChild(node, visit);
+  }; visit(parsed);
+  assert.ok(names.includes(CONTROLS_DIAGNOSTICS_ARTIFACT)); assert.ok(names.includes('stop-native-sample.json'));
+  assert.equal(CONTROLS_DIAGNOSTICS_ARTIFACT, 'diagnostics-export.json');
+  for (const name of names) assert.equal(reserved.has(name), false, name);
+});
+test('diagnostics export and receipt coexist while actual EEXIST stays closed and cannot overwrite either record', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'controls-diagnostics-names-'));
+  try {
+    const record = path.join(directory, 'old-diagnostics.json'); await writeNew(record, { original: true });
+    await assert.rejects(writeNew(record, { overwritten: true }), (error: any) => {
+      assert.deepEqual(sanitizeControlsFailure(error, 'phase-record-write'), { reason: 'FILE_EXISTS', checkpoint: 'phase-record-write', cause: 'none' }); return true;
+    });
+    assert.deepEqual(JSON.parse(await readFile(record, 'utf8')), { original: true });
+    assert.equal(await assertControlsDiagnosticsTargetAbsent(directory), path.join(directory, CONTROLS_DIAGNOSTICS_ARTIFACT));
+    await writeNew(path.join(directory, CONTROLS_DIAGNOSTICS_ARTIFACT), { productArtifact: true });
+    await assert.rejects(assertControlsDiagnosticsTargetAbsent(directory), (error: any) => error.code === 'EEXIST');
+    await writeNew(path.join(directory, 'diagnostics.json'), { phaseReceipt: true });
+    assert.deepEqual(JSON.parse(await readFile(path.join(directory, CONTROLS_DIAGNOSTICS_ARTIFACT), 'utf8')), { productArtifact: true });
+    assert.deepEqual(JSON.parse(await readFile(path.join(directory, 'diagnostics.json'), 'utf8')), { phaseReceipt: true });
+    assert.deepEqual(JSON.parse(await readFile(record, 'utf8')), { original: true });
+    assert.deepEqual(sanitizeControlsFailure(Object.assign(Error('PRIVATE_PATH'), { code: 'EEXIST', path: 'PRIVATE_PATH' }), 'diagnostics-export'), { reason: 'FILE_EXISTS', checkpoint: 'diagnostics-export', cause: 'none' });
+  } finally { assert.ok(path.resolve(directory).startsWith(path.resolve(os.tmpdir()) + path.sep)); await rm(directory, { recursive: true }); }
+});
+test('real diagnostics phase and receipt AST write separate artifacts and hold without overwrite on receipt EEXIST', async () => {
+  const ts = (await import('typescript')).default, { plainPath } = await import('./embedded-installed');
+  const source = await readFile(new URL('../release-1-controls-smoke.ts', import.meta.url), 'utf8');
+  const parsed = ts.createSourceFile('controls.ts', source, ts.ScriptTarget.Latest, true);
+  let phaseNode: import('typescript').FunctionDeclaration | undefined, receiptNode: import('typescript').ArrowFunction | undefined;
+  const visit = (node: import('typescript').Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'phaseAction') phaseNode = node;
+    if (ts.isArrowFunction(node) && node.body.getText(parsed).includes('const facts = await phaseAction(phase)') && node.body.getText(parsed).startsWith('{\n      await effect')) receiptNode = node;
+    ts.forEachChild(node, visit);
+  }; visit(parsed); assert.ok(phaseNode && receiptNode);
+  const compile = (text: string) => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'controls-real-diagnostics-phase-'));
+  try {
+    for (const collision of [false, true]) {
+      const output = path.join(directory, String(collision)), workspace = path.join(output, 'workspace'); await mkdir(workspace, { recursive: true });
+      const id = 'release-1-controls-1792441609558-2bb7dd', record = path.join(output, 'diagnostics.json'), original = '{"unchanged":true}\n';
+      if (collision) await writeFile(record, original);
+      const gate = new ControlsGate(pin);
+      for (const phase of CONTROL_PHASES.slice(0, CONTROL_PHASES.indexOf('diagnostics'))) { gate.arm(`${phase} ${gate.predecessor}`); gate.complete(phase, nextPin); }
+      gate.arm(`diagnostics ${gate.predecessor}`); const calls: string[] = [];
+      const dialog: any = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showSaveDialog: async () => ({ canceled: true, filePath: '' }) };
+      const context: any = { assert, path, output, workspace, plan: { id, candidateSha256: pin }, planSha: pin, phase: 'diagnostics', prior: gate.predecessor, startedAt: new Date().toISOString(),
+        checkpoint: 'none', gate, controlled: false, errors: [], CONTROLS_DIAGNOSTICS_ARTIFACT, assertControlsDiagnosticsTargetAbsent, plainPath, readStable, sha, writeNew, assertReleaseDiagnostics,
+        live() {}, effect: async (action: () => Promise<unknown>) => action(), verifyPlan: async () => {}, snapshot: async () => ({}), assertNoWork() {}, boundary: async () => ({}),
+        console: { log() {} }, app: { evaluate: async (fn: any, arg: unknown) => fn({ dialog }, arg) } };
+      context.invoke = async (method: string) => {
+        calls.push(method);
+        if (method === 'importProject') { await dialog.showOpenDialog(); throw Error('Synthetic expected import rejection'); }
+        assert.equal(method, 'exportDiagnostics'); const selected = await dialog.showSaveDialog(); if (!selected.filePath) return null;
+        await writeFile(selected.filePath, JSON.stringify({ schemaVersion: 1, version: '1.0.0', engineState: 'ready', engineError: '', platform: 'win32', arch: 'x64', diagnostics: [`qa-diagnostic-${id} password=[redacted]`] })); return selected.filePath;
+      };
+      vm.createContext(context); vm.runInContext('errors = [];\n' + compile(phaseNode.getText(parsed)), context);
+      const run = vm.runInContext(compile('const receipt = ' + receiptNode.getText(parsed) + ';receipt;'), context);
+      let failure: ReturnType<typeof sanitizeControlsFailure> | undefined;
+      await run().catch((error: unknown) => { if (!collision) throw error; gate.fail(); failure = sanitizeControlsFailure(error, context.checkpoint); });
+      assert.deepEqual(calls, ['importProject', 'exportDiagnostics', 'exportDiagnostics']);
+      assert.equal(JSON.parse(await readFile(path.join(output, CONTROLS_DIAGNOSTICS_ARTIFACT), 'utf8')).version, '1.0.0');
+      if (collision) { assert.equal(await readFile(record, 'utf8'), original); assert.equal(gate.held, true); assert.equal(gate.next, 'diagnostics'); assert.deepEqual(failure, { reason: 'FILE_EXISTS', checkpoint: 'phase-record-write', cause: 'none' }); }
+      else { const receipt = JSON.parse(await readFile(record, 'utf8')); assert.equal(receipt.scope, 'release-1-controls-phase-v1'); assert.equal(receipt.result, 'passed'); assert.equal(gate.next, 'close-a'); assert.equal(gate.held, false); }
+    }
+  } finally { assert.ok(path.resolve(directory).startsWith(path.resolve(os.tmpdir()) + path.sep)); await rm(directory, { recursive: true }); }
+});
 test('standard controls PATH is fixed child-only and never inherits cached PowerShell or alters missing-tools PATH', () => {
   const parent = { PATH: 'C:/unapproved/pwsh;C:/Users/qa/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell', Path: 'mixed', SYSTEMROOT: 'C:/Windows' };
   const child = controlsStandardEnvironment(parent);
