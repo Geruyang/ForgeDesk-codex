@@ -1,0 +1,59 @@
+{
+  "contract_id": "332b521b0fbdc3104c0c4b0fd017df01e090b004276b1f5982c9a04aace7e09e",
+  "decision_rule": {
+    "expected_top1": "pillow",
+    "scope": "one preselected scene ranking consistency only; not accuracy, probability, recall or FPS",
+    "strictly_above_all_distractors": true,
+    "threshold": 0.2,
+    "threshold_hit_reported_separately": true
+  },
+  "fixture_id": "fz3b-pillow-scene-v1",
+  "items": [
+    {
+      "id": "pillow",
+      "label": "pillow",
+      "text": "a photo of a pillow"
+    },
+    {
+      "id": "cup",
+      "label": "cup",
+      "text": "a photo of a cup"
+    },
+    {
+      "id": "mobile-phone",
+      "label": "mobile-phone",
+      "text": "a photo of a mobile phone"
+    },
+    {
+      "id": "bottle",
+      "label": "bottle",
+      "text": "a photo of a bottle"
+    }
+  ],
+  "jpeg": {
+    "mode": "RGB",
+    "optimize": false,
+    "progressive": false,
+    "quality": 95,
+    "subsampling": 0
+  },
+  "license_scope": "research-only validation; copied Apple model license applies",
+  "no_adaptive_prompts_or_threshold": true,
+  "schema_version": 1,
+  "source_image": {
+    "crop_xyxy_exclusive": [
+      127,
+      166,
+      1041,
+      678
+    ],
+    "label_basis": "offline visual inspection: person holding a pillow; not independent labeled test set",
+    "project_relative_path": "output/hardware/2026-10-16/fz3b-semantic-video-search/docs/media/xiaohongshu/03-实时检索实机.png",
+    "provenance": "existing project release 2.1 screenshot, original media 2.0; local manifest hash checked",
+    "sha256": "29ded4922c40e44cb7defcce8b3e37ac50691841954a0a1f421d379e612393c7",
+    "size": [
+      1702,
+      1102
+    ]
+  }
+}

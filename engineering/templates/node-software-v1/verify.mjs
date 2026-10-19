@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+
+const [outputRoot, nonce] = process.argv.slice(2);
+if (!outputRoot || !nonce) throw new Error('Fixed snapshot verifier arguments are required');
+const equal = assert.equal.bind(assert);
+const emit = process.stdout.write.bind(process.stdout);
+const filename = path.join(outputRoot, 'numbers.mjs');
+const before = createHash('sha256').update(readFileSync(filename)).digest('hex');
+const { average } = await import(pathToFileURL(filename).href);
+equal(typeof average, 'function');
+equal(average([]), 0, 'Empty input must return zero');
+equal(average([2, 4, 6]), 4, 'Nonempty mean must be correct');
+equal(average([-2, 2]), 0, 'Signed values must be supported');
+const after = createHash('sha256').update(readFileSync(filename)).digest('hex');
+equal(after, before, 'Verified artifact changed while executing');
+emit('FORGEDESK_TEST_RECEIPT:' + JSON.stringify({ schemaVersion: 1, nonce, checks: ['empty', 'nonempty', 'signed'], sha256: after, passed: true }) + '\n');

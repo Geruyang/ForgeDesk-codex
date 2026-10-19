@@ -1,0 +1,7 @@
+﻿{
+    "schemaVersion":  1,
+    "file":  "process-host.exe",
+    "sha256":  "722cfcd0d9ea9d187663c2f58b2e31f3dde2a00500a9aec3471d7ecedbe8d4ab",
+    "compiler":  "Microsoft .NET Framework csc v4.0.30319 x64",
+    "source":  "packages/process-host/ProcessHost.cs"
+}

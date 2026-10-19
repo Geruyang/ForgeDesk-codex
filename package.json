@@ -1,0 +1,101 @@
+{
+  "name": "forgedesk-codex",
+  "version": "0.5.7",
+  "private": true,
+  "description": "Windows engineering agent workbench",
+  "author": "ForgeDesk",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/run-tests.mjs",
+    "start": "electron .",
+    "dev": "npm run build && electron .",
+    "package": "npm run build && electron-builder --win nsis --x64",
+    "package:dir": "npm run build && electron-builder --win --dir --x64"
+  },
+  "dependencies": {
+    "lucide-react": "1.56.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.25.12",
+    "playwright": "1.56.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "global-agent@3.0.0": {
+      "roarr": "3.3.0"
+    }
+  },
+  "build": {
+    "appId": "dev.forgedesk.codex",
+    "productName": "ForgeDesk",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/codex",
+        "to": "codex"
+      },
+      {
+        "from": "vendor/process-host",
+        "to": "process-host"
+      },
+      {
+        "from": "engineering/templates/node-software-v1",
+        "to": "templates/node-software-v1"
+      },
+      {
+        "from": "vendor/hardware",
+        "to": "hardware"
+      },
+      {
+        "from": "engineering/hardware-worker.py",
+        "to": "hardware-worker.py"
+      },
+      {
+        "from": "engineering/templates/gesturescreen-v1",
+        "to": "templates/gesturescreen-v1"
+      },
+      {
+        "from": "engineering/fz3b/product/resources",
+        "to": "fz3b"
+      },
+      {
+        "from": "vendor/host-acl",
+        "to": "host-acl"
+      },
+      {
+        "from": "vendor/host-failed-empty-intent",
+        "to": "host-failed-empty-intent"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "signExecutable": false,
+      "icon": "apps/desktop/renderer/assets/brand.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "artifactName": "ForgeDesk-${version}-${arch}-setup.${ext}"
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "gesturescreen-v1-fdq1",
+  "source_commit": "c8ae2c906b3d8845b5d5b757099a43332bd6b985",
+  "hash_scope": "Trusted overlay file bytes before per-build ID injection; final snapshot hashes must bind the injected header.",
+  "files": [
+    {
+      "path": "App/Inc/forgedesk_build_id.h",
+      "sha256": "4745a11c91a4e094bd263af2a727dd5c716339334a918780ba64d947df86a14f",
+      "bytes": 374
+    },
+    {
+      "path": "BSP/Src/gs_usb_capture.c",
+      "sha256": "49489071d8b4b6ad9e3d282bdb6415853f391698b6d18b6ae52785cd03a72048",
+      "bytes": 10861
+    },
+    {
+      "path": "Modules/UsbCapture/Inc/gs_usb_protocol.h",
+      "sha256": "3de485dfc775b464b875b88e3d0a3379fd1ca51d495eff618440a02719582b14",
+      "bytes": 1704
+    },
+    {
+      "path": "Modules/UsbCapture/Src/gs_usb_protocol.c",
+      "sha256": "de3701cbf944822869ef28aee2286ad0a919fc331e86d84ffd559b0ea3401622",
+      "bytes": 3070
+    }
+  ],
+  "injection": {
+    "path": "App/Inc/forgedesk_build_id.h",
+    "macro": "FORGEDESK_BUILD_ID_BYTES",
+    "bytes": 32,
+    "default": "all-zero; verification must reject an all-zero build ID",
+    "runtime_source": "compiled static const bytes; never copied from a request"
+  },
+  "protocol": {
+    "request_magic": "FDQ1",
+    "request_bytes": 24,
+    "response_magic": "FDR1",
+    "response_bytes": 100,
+    "nonce_bytes": 16,
+    "build_id_bytes": 32,
+    "endianness": "little",
+    "crc": "CRC32/IEEE (zlib), request CRC at 20 over [0,20), response CRC at 96 over [0,96)",
+    "response_offsets": {
+      "nonce": 4,
+      "buildId": 20,
+      "uid": 52,
+      "flags": 64,
+      "camera_frames": 68,
+      "camera_errors": 72,
+      "camera_timeouts": 76,
+      "display_errors": 80,
+      "sysclk_hz": 84,
+      "pll48_hz": 88,
+      "uptime_ms": 92,
+      "crc32": 96
+    },
+    "flags": {
+      "sdram_ready": 1,
+      "camera_ready": 2,
+      "flash_profile_match": 4,
+      "usb_configured": 8,
+      "fault_free": 16
+    }
+  },
+  "scheduling": {
+    "pending_capacity": 1,
+    "capacity_includes_in_flight_reply": true,
+    "queue_full": "drop new request; host retries",
+    "ordering": "between complete GSFR frames, before the next READY frame; never changes tx while tx_busy",
+    "reset": "drop queued/in-flight query state and pre-reset RX bytes",
+    "retry": "same or new nonce accepted after previous response TX completion has been consumed by StorageTask",
+    "response_deadline_note": "A request behind an active GSFR can wait up to the existing 3000 ms frame timeout; host should allow retry/time budget."
+  },
+  "project_constraints": {
+    "uvprojx_unmodified": true,
+    "new_translation_units": false,
+    "include_path": "existing ../App/Inc",
+    "original_firmware_directory_unmodified": true
+  }
+}

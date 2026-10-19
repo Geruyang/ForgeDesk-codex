@@ -1,0 +1,40 @@
+{
+  "backend": "official mobileclip_s1 reparameterized CPU FP32; not board A0005",
+  "board_comparison": "not run; score/ranking only, no arbitrary FP32-vs-quantized error tolerance asserted",
+  "decision": {
+    "ranking": [
+      {
+        "id": "pillow",
+        "score": 0.28131765127182007
+      },
+      {
+        "id": "cup",
+        "score": 0.0979945957660675
+      },
+      {
+        "id": "bottle",
+        "score": 0.09209233522415161
+      },
+      {
+        "id": "mobile-phone",
+        "score": 0.07586534321308136
+      }
+    ],
+    "scope": "one preselected scene ranking consistency only; not accuracy, probability, recall or FPS",
+    "semantic_consistency_pass": true,
+    "target_minus_best_distractor": 0.18332305550575256,
+    "target_rank": 1,
+    "target_threshold_hit": true,
+    "threshold": 0.2
+  },
+  "identity": {
+    "bpe_sha256": "924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a",
+    "contract_id": "332b521b0fbdc3104c0c4b0fd017df01e090b004276b1f5982c9a04aace7e09e",
+    "normalization": "l2-float32-v1",
+    "source_revision": "48faa0fea4b08d74188b3841771aca6ff2c92852",
+    "tokenizer_context": 77,
+    "weight_sha256": "1270fab6ea23bacbd61cea564bd521a7e875fdb0fcb6d31382bccf4d973b71a6"
+  },
+  "image_sha256": "06dd779d1450c835255833be19c84f6636c2de99313713d80c850fa572c25967",
+  "text_features_sha256": "eab4d0f4a6dc2abc19a0dfc59a0e026889039d1bad79260df7e0e8117fe2aaaf"
+}

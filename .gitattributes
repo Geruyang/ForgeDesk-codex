@@ -1,0 +1,7 @@
+# Firmware overlay hashes bind the exact reviewed bytes, including line endings.
+engineering/templates/gesturescreen-v1/** -text
+vendor/hardware/manifest.json -text
+docs/third-party/** -text
+
+# The fixed helper source pin includes its reviewed LF bytes.
+engineering/windows/host-acl/NativeAclHelper.cs -text

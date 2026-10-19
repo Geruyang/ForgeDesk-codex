@@ -1,0 +1,24 @@
+{
+  "embeddingDimensions": 512,
+  "encoderIdentity": {
+    "bpeSha256": "924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a",
+    "contractId": "332b521b0fbdc3104c0c4b0fd017df01e090b004276b1f5982c9a04aace7e09e",
+    "normalization": "l2-float32-v1",
+    "weightSha256": "1270fab6ea23bacbd61cea564bd521a7e875fdb0fcb6d31382bccf4d973b71a6"
+  },
+  "expectedLabel": "pillow",
+  "height": 512,
+  "id": "fz3b-pillow-scene-v1",
+  "imageSha256": "06dd779d1450c835255833be19c84f6636c2de99313713d80c850fa572c25967",
+  "manifestSha256": "febcb9d93517f3c98eadb5d98eea6808f243fb6a1d4b61215cd981503de98e56",
+  "predeclaredSha256": "0e8375dde13eab4335f622aa782087ea56252f9f95d261c6de3523709eb11899",
+  "queriesSha256": "0d10e566bb1c167d3987e8d782f1c0c6f87ee3c1aaba9983afe1f8a134e106e9",
+  "queryCount": 4,
+  "queryIds": [
+    "pillow",
+    "cup",
+    "mobile-phone",
+    "bottle"
+  ],
+  "width": 914
+}

@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "scope": "Fixed approved PS acceptance-package inputs, not Vivado or a deployable PL rebuild",
+  "upstreamCommit": "59cdbefade2535dbeea9a34d1658a307ab7f3bb7",
+  "approvedDeploymentManifestSha256": "d0740647bdb4a505414e626839c5eff811091b25612e09cce5487a459a631c09",
+  "modelLicense": "Research-only; embedded features do not grant commercial model rights",
+  "newPlBuilt": false,
+  "deployed": false,
+  "sourceFiles": [
+    {
+      "path": "run.sh",
+      "sha256": "198286c615e14da06c56d315b39bc33cde26958647ace994b5f99ff0ae833c31"
+    },
+    {
+      "path": "config.example.json",
+      "sha256": "f3e9e752309761db899e3d19b8f21dbb24b23ddd1330dffec5b1ea8cfd55acc6"
+    },
+    {
+      "path": "vision_app/__init__.py",
+      "sha256": "ed7c40669dd544db2e364a2d21bfdfdb129693e2491e80dae6ff43ed9d972923"
+    },
+    {
+      "path": "vision_app/board_agent.py",
+      "sha256": "6a769109783596c566fe930a10e8d41b7e9b968053fca1ec3f8ea48104ac4c6a"
+    },
+    {
+      "path": "vision_app/board_runtime.py",
+      "sha256": "d637298882c6f65a172e07e8c7ed65a816c49922e005a567f633c5d4364eb95e"
+    },
+    {
+      "path": "vision_app/boot_units.py",
+      "sha256": "3d59d7e1335b4d71e48fc6bcda705fc690ab45bc6887b0b9a4ae7af1c5b7e0e5"
+    },
+    {
+      "path": "vision_app/camera.py",
+      "sha256": "a0b954e7c5fef1d3d441055891db9109038dc61b324458a0082055d7dddcc5c2"
+    },
+    {
+      "path": "vision_app/contract.py",
+      "sha256": "104f3a4a3eae2e9ed1ba1801a691b0421c5f152d41bdfbd50de6f369ad815761"
+    },
+    {
+      "path": "vision_app/cpu_clock_service.py",
+      "sha256": "f60008ea484df1203f8d9ea2d6c37588f7aa5ac845b42cc2a981e28c8285e8d8"
+    },
+    {
+      "path": "vision_app/frequency.py",
+      "sha256": "6529262dc8f280dcffd87fc05ebc43a84e7caf514f07a19cd2db9821a4e8ecaa"
+    },
+    {
+      "path": "vision_app/hardware_monitor.py",
+      "sha256": "1a0db65e09cf4ee4f5c802750c04671c9bcd5a9cc9f76c3efcebad990d3a55aa"
+    },
+    {
+      "path": "vision_app/image_boundary.py",
+      "sha256": "653327b2fadbb10ac219895fd5babaa498f2eabcec8075320b007e453e4e9057"
+    },
+    {
+      "path": "vision_app/link_setup.py",
+      "sha256": "0b04be3ae67bb9b891fb8833640565a3cb5d0c66469817eb91772e0dfb03e5cf"
+    },
+    {
+      "path": "vision_app/prefetch.py",
+      "sha256": "a8f4040165b65aae50c2b89ce9820b320269ea29a6df1835b3735d456898a320"
+    },
+    {
+      "path": "vision_app/protocol.py",
+      "sha256": "c2c3583d8e8bcf07ff0a4307bd7c59da7597a08cc3b4aee9d5e542eac1463c37"
+    },
+    {
+      "path": "vision_app/r5_bridge.py",
+      "sha256": "c1695156be3ab7622dcd9af91824606da3600f1d1fd0fac7206e7fd49d93642d"
+    },
+    {
+      "path": "vision_app/r5_start.py",
+      "sha256": "039b622ccbeb0d6b9fca782bddd5659e9a1796bf970248cb035d42d897f60d74"
+    },
+    {
+      "path": "vision_app/recent_fps.py",
+      "sha256": "49ab2bdbdec42419eebac76692e255a0e42ea22ad8b2d0f819d4f4a546e2358c"
+    },
+    {
+      "path": "vision_app/semantic-contract.json",
+      "sha256": "5f2f281ff7d3f92539a96f42728bd0dcdf5e70d07c98a00cff7f07fdb64aac87"
+    },
+    {
+      "path": "vision_app/state.py",
+      "sha256": "15a8d73920c5d6edfecdfe94d63c3da3743422bc95bed33adc0f6f9648285699"
+    },
+    {
+      "path": "vision_app/upload_source.py",
+      "sha256": "c96c0ac23d2f037c2f56403de74a987b6dfc02ce75e9fd0c5445c219172d8249"
+    },
+    {
+      "path": "vision_app/r5/worker.c",
+      "sha256": "a346367a841a22108ad98bbc91f44f9e6b6509e93513b5f52c92905b77d6b8c8"
+    },
+    {
+      "path": "vision_app/r5/tcm_io.c",
+      "sha256": "6c7131700fc1b60bec3ce8a919ffeac89153fabeecf414563b32af15ec1d7123"
+    },
+    {
+      "path": "vision_app/r5/tcm.ld",
+      "sha256": "85136badafedf8a20dd9f5e731b1591658108b0ce7ac2a33d36e200c31e76ef6"
+    },
+    {
+      "path": "vision_app/r5/tcm-split-overlay.dts",
+      "sha256": "25d8993dacff1159c18fdf4eda41486a86802a1f24255b25219cab66d616dcc5"
+    },
+    {
+      "path": "vision_app/r5/start.S",
+      "sha256": "3bded65c7406b4bf8c25ed12346a4ab81c4e21e1172eef3459a8ddf3f94db6f3"
+    },
+    {
+      "path": "vision_app/r5/build.ps1",
+      "sha256": "e809810c052d8dc33eecb23fce7f585e15e9c3e4c990311ed284904e13e33cd3"
+    },
+    {
+      "path": "services/fz3b-vision-console.service",
+      "sha256": "a9a8efdc4a2de6ba71b8c7b5331fc4c7718b0628be2a94c706de803e8e01f986"
+    },
+    {
+      "path": "services/fz3b-pl-loader.service",
+      "sha256": "77adc9dd7978bee31cd36cac808210a191df4321bd5ca05bbbf491978dde5e90"
+    },
+    {
+      "path": "services/fz3b-app-r5.service",
+      "sha256": "0d1f56d430f2c798f8f62511b625626364c5d18ca2321d765cf7a86b09dcaeb2"
+    },
+    {
+      "path": "services/fz3b-app-cpu-clock.service",
+      "sha256": "fd76d55dc0d7649007454f949725f3c5f8e2e92711b2d360b45a2d2411175331"
+    }
+  ]
+}

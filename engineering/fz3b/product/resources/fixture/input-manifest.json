@@ -1,0 +1,12 @@
+{
+  "device_inference_run": false,
+  "fixture_id": "fz3b-pillow-scene-v1",
+  "image_is_derived_screenshot_crop": true,
+  "image_is_synthetic": false,
+  "input_bytes": 144219,
+  "input_height": 512,
+  "input_sha256": "06dd779d1450c835255833be19c84f6636c2de99313713d80c850fa572c25967",
+  "input_width": 914,
+  "pillow_top1_required": true,
+  "predeclared_sha256": "0e8375dde13eab4335f622aa782087ea56252f9f95d261c6de3523709eb11899"
+}
