@@ -160,5 +160,3 @@ export function loadReadonlyHistory(entries: { name: string; raw: Buffer }[], ow
     releaseAuthorized: false, newRunAuthorized: false, testDeploymentAuthorized: false,
     finalReleaseAuthorized: false, automaticReplay: false, unknownHistoryRewritten: false });
 }
-
-

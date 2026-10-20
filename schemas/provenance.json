@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "generatedOn": "2026-10-14",
+  "generator": "official codex-cli 0.162.0-alpha.17.2",
+  "generatorExecutable": "C:/Users/ruyangge/AppData/Local/OpenAI/Codex/bin/9614f1d9b40d9c4f/codex.exe",
+  "generatorSha256": "e98c516f1c8935789aabe9122ee7e05ec4c3efd1ba6acf179242e031c495b99e",
+  "source": "Official Codex desktop-installed CLI located with Get-Command codex; no binary was downloaded during generation",
+  "upstream": "https://github.com/openai/codex",
+  "command": "codex app-server generate-ts --out E:/AiProject/agent-design/ForgeDesk-codex/schemas",
+  "experimental": false,
+  "productHome": "E:/AiProject/agent-design/ForgeDesk-codex/packages/engine-adapter/.protocol-home",
+  "typescriptFileCount": 743,
+  "typescriptBytes": 434678,
+  "typescriptTreeSha256": "190e00e7002cb1b961176517df152d9031700902cccfaf3ba6ca1924144404a7",
+  "treeHashAlgorithm": "Sort .ts relative paths with Node Array.sort; hash path normalized to forward slash, NUL byte, raw file bytes, NUL byte for each file with SHA-256",
+  "notes": "Generated files are unmodified. The CLI and app-server generation command are alpha/experimental even when experimental API fields are not requested. Keep the runtime binary and schemas versioned together."
+}

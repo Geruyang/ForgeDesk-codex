@@ -41,8 +41,8 @@ export const RESOURCE_SPECS = Object.freeze([
   { from: 'engineering/hardware-worker.py', to: 'hardware-worker.py', single: true, files: [{ path: '', sha256: '00afe49ab02ecc639599eab8fbc54242c293a1bf6674286e94ca389636b35a3f' }] },
   { from: 'engineering/templates/gesturescreen-v1', to: 'templates/gesturescreen-v1', manifest: 'overlay-manifest.json', kind: 'files', pin: 'd69f4e175352d29669d262d92f3da77a3c877d3f0673681d685d4bc667cf04f7' },
   { from: 'engineering/fz3b/product/resources', to: 'fz3b', manifest: 'manifest.json', kind: 'files', pin: 'b8db612a4c3c7d427d1fac36323c0b35f4bd1109cba092116415f5b9c0b03c07' },
-  { from: 'vendor/host-acl', to: 'host-acl', manifest: 'manifest.json', kind: 'files', pin: '1f7f092ba4cee1edcb9c52978ae2c6bb11093b2d76508be3060912e2fbb62fd7' },
-  { from: 'vendor/host-failed-empty-intent', to: 'host-failed-empty-intent', manifest: 'manifest.json', kind: 'intent', pin: '11b54d725a3e11c2cc95e7e1778f9ba1a877d6e715ea43c3339d424683b9db5b' },
+  { from: 'vendor/host-acl', to: 'host-acl', manifest: 'manifest.json', kind: 'generated-host-acl', sourcePin: 'aa3079992d2ac92b5dd800d3e5c62f70671dce36ff80b28ca7f6f8694e75786e', compilerPin: '46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00' },
+  { from: 'vendor/host-failed-empty-intent', to: 'host-failed-empty-intent', manifest: 'manifest.json', kind: 'generated-failed-intent', policyPin: '6747f3b255c8f074ba28a3fee7cadb07316750aa05494b1e41d45a046c3108e3' },
   ...[
     ['Codex-LICENSE.txt', 'd17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc'],
     ['Codex-NOTICE.txt', '9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915'],
@@ -79,13 +79,24 @@ export function expectedResourceRows(spec, manifestRaw) {
   need(!spec.generated, 'GENERATED_RESOURCE_CAPTURE_REQUIRED');
   let files = [...(spec.files ?? [])];
   if (spec.manifest) {
-    need(Buffer.isBuffer(manifestRaw) && manifestRaw.length <= 2097152 && sha256(manifestRaw) === spec.pin, 'RESOURCE_PIN_CHANGED');
+    need(Buffer.isBuffer(manifestRaw) && manifestRaw.length > 0 && manifestRaw.length <= 2097152, 'RESOURCE_MANIFEST_BOUND');
+    if (spec.pin) need(sha256(manifestRaw) === spec.pin, 'RESOURCE_PIN_CHANGED');
     const data = json(manifestRaw);
     if (spec.kind === 'codex') files = data.files.map(f => ({ path: f.name, bytes: f.size, sha256: f.sha256.toLowerCase() }));
     else if (spec.kind === 'process') files = [{ path: data.file, sha256: data.sha256 }];
     else if (spec.kind === 'intent') files = [{ path: 'FailedEmptyIntentHelper.exe', sha256: data.executableSha256 }];
+    else if (spec.kind === 'generated-host-acl') {
+      need(Object.keys(data).sort().join(',') === 'compilerSha256,files,protocolVersion,schemaVersion,scope,sourceSha256' &&
+        data.schemaVersion === 1 && data.scope === 'fixed-host-acl-dotnet-v1' && data.protocolVersion === 1 &&
+        data.sourceSha256 === spec.sourcePin && data.compilerSha256 === spec.compilerPin && Array.isArray(data.files) && data.files.length === 1, 'HOST_ACL_MANIFEST');
+      files = data.files.map(f => ({ path: f.path, bytes: f.bytes, sha256: f.sha256 }));
+    } else if (spec.kind === 'generated-failed-intent') {
+      need(Object.keys(data).sort().join(',') === 'executableSha256,policySourceSha256,protocol,schemaVersion' &&
+        data.schemaVersion === 1 && data.protocol === 'fz3b-failed-empty-intent-v1' && data.policySourceSha256 === spec.policyPin, 'FAILED_INTENT_MANIFEST');
+      files = [{ path: 'FailedEmptyIntentHelper.exe', sha256: data.executableSha256 }];
+    }
     else { need(Array.isArray(data.files), 'MANIFEST'); files = data.files.map(f => ({ path: f.path, bytes: f.bytes, sha256: f.sha256 })); }
-    files.push({ path: spec.manifest, bytes: manifestRaw.length, sha256: spec.pin }, ...(spec.extra ?? []));
+    files.push({ path: spec.manifest, bytes: manifestRaw.length, sha256: sha256(manifestRaw) }, ...(spec.extra ?? []));
   }
   const names = new Set();
   for (const row of files) {
@@ -213,7 +224,7 @@ function sourceSnapshot() {
     if (spec.generated) { resources.push({ path: 'resources/' + spec.to, ...readFile(path.join(ROOT, spec.from), false, 16777216) }); continue; }
     const manifest = spec.manifest ? readFile(path.join(ROOT, spec.from, spec.manifest), true).raw : undefined;
     const expected = expectedResourceRows(spec, manifest);
-    if (spec.manifest) resourceManifestPins.push({ path: spec.from + '/' + spec.manifest, sha256: spec.pin });
+    if (spec.manifest) resourceManifestPins.push({ path: spec.from + '/' + spec.manifest, sha256: sha256(manifest) });
     const rows = spec.single ? [{ path: spec.to, ...readFile(path.join(ROOT, spec.from)) }] : inspect(path.join(ROOT, spec.from), expected).map(r => ({ ...r, path: spec.to + '/' + r.path }));
     if (spec.single) need(rows[0].sha256 === expected[0].sha256, 'FILE_PIN');
     resources.push(...rows.map(r => ({ ...r, path: 'resources/' + r.path })));
@@ -350,7 +361,8 @@ export function validateReleaseManifest(value) {
   exact(value.sourceFreeze.assetApproval, ['path', 'sha256']); need(isDeepStrictEqual(value.sourceFreeze.assetApproval, ASSET_APPROVAL), 'RECEIPT_ASSET_APPROVAL');
   for (const key of ['packageSha256', 'lockSha256', 'auditSourceSha256', 'buildSourceSha256']) need(hex(value.sourceFreeze[key]), 'RECEIPT_PIN');
   need(Array.isArray(value.sourceFreeze.resourceManifestPins) && value.sourceFreeze.resourceManifestPins.length === RESOURCE_SPECS.filter(s => s.manifest).length, 'RECEIPT_RESOURCE_PINS');
-  for (const spec of RESOURCE_SPECS.filter(s => s.manifest)) need(value.sourceFreeze.resourceManifestPins.some(p => p.path === spec.from + '/' + spec.manifest && p.sha256 === spec.pin), 'RECEIPT_RESOURCE_PIN');
+  for (const spec of RESOURCE_SPECS.filter(s => s.manifest)) need(value.sourceFreeze.resourceManifestPins.some(p =>
+    p.path === spec.from + '/' + spec.manifest && hex(p.sha256) && (!spec.pin || p.sha256 === spec.pin)), 'RECEIPT_RESOURCE_PIN');
   for (const pin of value.sourceFreeze.resourceManifestPins) exact(pin, ['path', 'sha256']);
   need(Array.isArray(value.sourceFreeze.resourceTransforms) && value.sourceFreeze.resourceTransforms.length === 1, 'RECEIPT_TRANSFORM');
   const transform = value.sourceFreeze.resourceTransforms[0]; exact(transform, ['path', 'method', 'sourceSha256', 'packagedSha256']);

@@ -268,7 +268,7 @@ test('current captured package validator and installed adapter agree on the comp
   codex.bytes = audit.CODEX_PACKAGED_MANIFEST_BYTES; codex.sha256 = audit.CODEX_PACKAGED_MANIFEST_SHA256;
   const value = releaseFixture(); value.sourceFreeze.auditSourceSha256 = sha(source);
   value.sourceFreeze.assetApproval = { ...audit.ASSET_APPROVAL };
-  value.sourceFreeze.resourceManifestPins = audit.RESOURCE_SPECS.filter((s: any) => s.manifest).map((s: any) => ({ path: s.from + '/' + s.manifest, sha256: s.pin }));
+  value.sourceFreeze.resourceManifestPins = audit.RESOURCE_SPECS.filter((s: any) => s.manifest).map((s: any) => ({ path: s.from + '/' + s.manifest, sha256: s.pin ?? PIN }));
   value.sourceFreeze.resourceTransforms = [{ path: codex.path, method: 'codex-public-source-only-v1', sourceSha256: value.sourceFreeze.resourceManifestPins.find((p: any) => p.path === 'vendor/codex/manifest.json').sha256, packagedSha256: codex.sha256 }];
   value.resources = resources; value.unpacked.files = [...audit.RUNTIME_FILES.map(row), ...resources]; value.bundles = audit.PACKAGED_FILES.filter((p: string) => p !== 'package.json').map(row);
   assert.equal(audit.validateReleaseManifest(value), value); assertReleaseShape(value);

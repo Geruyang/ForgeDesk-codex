@@ -19,7 +19,7 @@ function manifestFixture() {
   const codex = resources.find(r => r.path === 'resources/codex/manifest.json'); codex.sha256 = CODEX_PACKAGED_MANIFEST_SHA256; codex.bytes = CODEX_PACKAGED_MANIFEST_BYTES;
   return { schema: 'forgedesk-release-package-audit-v1', version: VERSION, appId: APP_ID,
     sourceFreeze: { packageSha256: h, lockSha256: h, auditSourceSha256: h, buildSourceSha256: h, assetApproval: { ...ASSET_APPROVAL },
-      resourceManifestPins: RESOURCE_SPECS.filter(s => s.manifest).map(s => ({ path: s.from + '/' + s.manifest, sha256: s.pin })),
+      resourceManifestPins: RESOURCE_SPECS.filter(s => s.manifest).map(s => ({ path: s.from + '/' + s.manifest, sha256: s.pin ?? h })),
       resourceTransforms: [{ path: 'resources/codex/manifest.json', method: 'codex-public-source-only-v1', sourceSha256: RESOURCE_SPECS[0].pin, packagedSha256: CODEX_PACKAGED_MANIFEST_SHA256 }] },
     artifacts: [row('release/ForgeDesk-1.0.0-x64-setup.exe')], unpacked: { path: 'release/win-unpacked', files: [...RUNTIME_FILES.map(row), ...resources] },
     resources, bundles: PACKAGED_FILES.filter(p => p !== 'package.json').map(row),
@@ -127,6 +127,23 @@ test('BOM process manifest and the distinct helper schemas remain supported, not
   ]) {
     const raw = Buffer.from('\uFEFF' + JSON.stringify(data));
     assert.ok(expectedResourceRows({ kind, manifest: 'manifest.json', pin: sha256(raw) }, raw).some(r => r.path === expected));
+  }
+});
+
+test('generated native helper manifests bind fixed build provenance while recording this build output', () => {
+  const acl = RESOURCE_SPECS.find(spec => spec.kind === 'generated-host-acl');
+  const intent = RESOURCE_SPECS.find(spec => spec.kind === 'generated-failed-intent');
+  const executable = '2'.repeat(64);
+  const aclRaw = Buffer.from(JSON.stringify({ schemaVersion: 1, scope: 'fixed-host-acl-dotnet-v1', protocolVersion: 1,
+    sourceSha256: acl.sourcePin, compilerSha256: acl.compilerPin, files: [{ path: 'NativeAclHelper.exe', bytes: 1024, sha256: executable }] }));
+  const intentRaw = Buffer.from(JSON.stringify({ schemaVersion: 1, protocol: 'fz3b-failed-empty-intent-v1',
+    policySourceSha256: intent.policyPin, executableSha256: executable }));
+  assert.deepEqual(expectedResourceRows(acl, aclRaw).map(row => row.path), ['manifest.json', 'NativeAclHelper.exe']);
+  assert.deepEqual(expectedResourceRows(intent, intentRaw).map(row => row.path), ['FailedEmptyIntentHelper.exe', 'manifest.json']);
+  for (const raw of [Buffer.from(aclRaw.toString().replace(acl.sourcePin, h)),
+    Buffer.from(intentRaw.toString().replace(intent.policyPin, h)), Buffer.from('{"schemaVersion":1}')]) {
+    const spec = raw.includes(Buffer.from('fixed-host-acl-dotnet-v1')) ? acl : intent;
+    assert.throws(() => expectedResourceRows(spec, raw), /MANIFEST/);
   }
 });
 

@@ -1,0 +1,16 @@
+# Decisions
+
+1. Follow supplied v2.1 plan. Windows desktop is the delivery target.
+2. All implementation and generated artifacts live under ForgeDesk-codex. Runtime for this development and installed acceptance run is explicitly configured under `.runtime` within this directory to respect the user's output placement.
+3. Protocol types are generated from actual local official CLI 0.162.0-alpha.17.2. Engine owner records SHA-256 and provenance. Alpha version is an explicit release limitation.
+4. No experimental API, no token reuse, no renderer arbitrary RPC/command bridge. Official account login is the user's chosen path.
+5. Hardware absent and user deferred selection: fail closed, no live flash UI.
+6. Dependency versions are exact, lockfile owned by integration. esbuild bundles app and renderer; electron-builder produces per-user NSIS.
+7. First version uses versioned atomic JSON for small metadata. This differs from preferred SQLite and must preserve single-writer semantics and crash recovery; upgrade path documented before schema changes.
+8. Security baseline follows https://www.electronjs.org/docs/latest/tutorial/security : isolated sandboxed renderer, narrow preload, IPC sender validation, blocked navigation and remote content.
+9. Native process-host is built from included C# source using Windows .NET Framework csc. Child creation is suspended until Job Object assignment, with kill-on-close and parent-death monitoring. This applies to cancellable software, never implicitly to device writes.
+10. Final environment probe showed MXC startup succeeds, while unelevated mode both permits project writes and rejects a protected sibling write. The accepted code path remains explicit unelevated for this build; MXC full workflow/bypass regression is still unverified and no stronger claim is made.
+11. MCP test tools require a caller requestKey per intended check. After source edits a new key runs a new verifier; retries of the same invocation retain the original result. A turn ID alone is not a test invocation key.
+12. Ambiguous send or stop outcomes block new work until explicit reconnect confirms old engine shutdown. UI retains the history-gap warning after recovery and never silently resends a prompt.
+13. The authenticated installed smoke exposed a real MCP consent request not covered by the initial fixtures. Its first call was conservatively cancelled and is retained as failed evidence. The fixed CLI's actual `engineering` form uses an empty object schema and `codex_approval_kind=mcp_tool_call`; support is restricted to an explicit single-call decision through the existing approval UI. Session/permanent persistence and arbitrary form inputs remain unsupported. Development probes do not replace final installed regression.
+14. A real interruption probe observed the original PowerShell process still alive after the engine's `interrupted` terminal event. Successful user interruption therefore closes the shared engine's owning Job Object before reconnecting. A stop gate prevents new sends, steer, approvals and MCP calls during cleanup. Existing terminal events are preserved; missing history remains visible. No turn is automatically replayed. The independent engineering runner is a separate lifecycle and retains its own cancellation control.

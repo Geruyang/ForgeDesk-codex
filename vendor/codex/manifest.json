@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "size": 334121776,
+      "name": "codex.exe",
+      "sha256": "E98C516F1C8935789AABE9122EE7E05EC4C3EFD1BA6ACF179242E031C495B99E"
+    },
+    {
+      "size": 74712368,
+      "name": "codex-code-mode-host.exe",
+      "sha256": "EC4B09849F3A5BDF4A0C3D1F3C566BDA392FDCD9B4AEF6BD169A81EF1283FC3D"
+    },
+    {
+      "size": 8204592,
+      "name": "codex-command-runner.exe",
+      "sha256": "BDF5160289BC4D64BC2FA38C43F9679558B3A4386226ADC66A0AF741E41424B7"
+    },
+    {
+      "size": 17725744,
+      "name": "codex-windows-sandbox-setup.exe",
+      "sha256": "4C24960E4039B90B9C0E5E86418834F823218ED6DB35CA08EFAD8A5A654295ED"
+    }
+  ],
+  "source": "C:\\Users\\ruyangge\\AppData\\Local\\OpenAI\\Codex\\bin\\9614f1d9b40d9c4f",
+  "version": "codex-cli 0.162.0-alpha.17.2",
+  "recordedAt": "2026-10-14T13:12:09.8827256+08:00"
+}
